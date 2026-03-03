@@ -1,16 +1,20 @@
 # How to run 
+```
+chmod +x run.sh
+./run.sh GH_ACCOUNT GH_ACCESS_TOKEN
 
-docker run -d \
-  --name search-report-service \
-  -p 8080:8080 \
-  -v /tmp/search-report-db:/data/db \
-  -e DB_PATH=/data/db \
-  -e SPRING_PROFILES_ACTIVE=prod \
-  -e IDENTITY_PROVIDER=azure \
-  -e OPENID_CLIENT_ID="AZURE_CLIENT_ID" \
-  -e OPENID_CLIENT_SECRET="AZURE_CLIENT_SECRET" \
-  -e OPENID_REDIRECT_URI="https://YOUR_DOMAIN/search-report-service/" \
-  -e OPENID_SEARCH_SCOPE="api://b16225bd-49b8-4999-b571-c19a911ae1ec/search" \
-  -e SEARCH_REPORT_SERVICE_CONTEXT_PATH=/search-report-service \
-  -e SEARCH_REPORT_SERVICE_PORT="8080" \
-  search-report-service
+
+#Monitor
+docker logs -f search-report-service
+
+
+```
+
+# Logging
+For more logging options use following variables 
+```
+    root: ${ROOT_LOGGING_LEVEL:WARN}
+    org.epo.itc: ${APP_LOGGING_LEVEL:INFO}
+    org.springframework: ${SPRING_LOGGING_LEVEL:WARN}
+    org.hibernate.SQL: ${SQL_LOGGING_LEVEL:WARN}
+```
