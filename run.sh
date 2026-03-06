@@ -1,11 +1,11 @@
 export GITHUB_USER="${1:-${GITHUB_USER:-}}"
 export GITHUB_TOKEN="${2:-${GITHUB_TOKEN:-}}"
-export AZURE_TENANT_ID="${AZURE_TENANT_ID:-}"
-export AZURE_SEARCH_APP_ID="${AZURE_SEARCH_APP_ID:-}"
+export AZURE_TENANT_ID="${3:-${AZURE_TENANT_ID:-}}"
+export AZURE_SEARCH_APP_ID="${4:-${AZURE_SEARCH_APP_ID:-}}"
 
 if [ -z "$GITHUB_USER" ] || [ -z "$GITHUB_TOKEN" ]; then
-  echo "Usage: ./run.sh <github-user> <github-token>"
-  echo "   or: GITHUB_USER=x GITHUB_TOKEN=y ./run.sh"
+  echo "Usage: ./run.sh <github-user> <github-token> <azure-tenant-id> <azure-search-app-id>"
+  echo "   or: GITHUB_USER=x GITHUB_TOKEN=y AZURE_TENANT_ID=z AZURE_SEARCH_APP_ID=w ./run.sh"
   exit 1
 fi
 
