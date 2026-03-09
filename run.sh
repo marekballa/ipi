@@ -31,6 +31,7 @@ docker run -d --pull always \
   -v /Users/marekb/workspace/spfo/fo-configuration-ch:/data/config \
   -e DB_PATH="/data/db" \
   -e CONFIGURATION_BASE_PATH="/data/config/" \
+#  -e JAVA_TOOL_OPTIONS="-Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=8800" \
   -e SPRING_PROFILES_ACTIVE="prod" \
   -e IDENTITY_PROVIDER="azure" \
   -e APP_LOGGING_LEVEL="debug" \
