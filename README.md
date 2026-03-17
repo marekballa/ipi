@@ -128,9 +128,46 @@ flowchart LR
 | Works for external API clients | ❌ No | ✅ Yes |
 | Works for async background jobs | ❌ No | ✅ Yes |
 
-> **Key implication on user identity**: With Client Credentials there is no user JWT, so the `name` claim cannot be extracted from the token. The **caller must supply `userName` explicitly** in the API request body. This must be stored at dossier creation time and forwarded to ABS as a payload field.
-
 > **Open blocker**: ABS/Ansera must be verified to accept service-level (Client Credentials) tokens. If ABS mandates user-delegated tokens, ABS-side configuration changes are required before this architecture is viable.
+
+---
+
+## Can Entra ID inject a user identity into a Client Credentials token?
+
+**No — this is a hard OAuth 2.0 constraint, not an Azure limitation.**
+
+Client Credentials tokens are application-only by definition. There is no user in the flow, so there is nothing to map from. Azure AD claims mapping policies, optional claims, and extension attributes only transform claims that already exist for the authenticated principal — which in Client Credentials is the service app, not a person.
+
+The only Entra mechanism that preserves user identity through a service call is **On-Behalf-Of (OBO)**:
+
+```mermaid
+sequenceDiagram
+    participant Caller as External Caller
+    participant AzureAD as Azure AD
+    participant SRS as search-report-service
+    participant ABS as Ansera / ABS
+
+    Caller->>AzureAD: Auth Code / Device Flow (user authenticates)
+    AzureAD-->>Caller: user token (contains name, oid, etc.)
+
+    Caller->>SRS: API call + Authorization: Bearer <user-token>
+
+    SRS->>AzureAD: OBO exchange<br/>grant_type=jwt-bearer<br/>assertion=user-token<br/>scope=api://b16225bd.../.default
+    AzureAD-->>SRS: search-scoped token (user claims preserved)
+
+    SRS->>ABS: Authorization: Bearer <search-scoped-token><br/>(token still contains user identity)
+    ABS-->>SRS: result
+```
+
+OBO requires the external caller to already hold a **real user token** — they must have authenticated as an actual person first (Auth Code or Device Flow). It does not help for pure machine-to-machine calls where no user is involved.
+
+### Decision: which flow based on ABS project ownership model
+
+| ABS project ownership | Correct flow | User identity source |
+|---|---|---|
+| No per-user control (shared) | **Client Credentials** | Not needed |
+| Per-user, user exists in Entra | **OBO** — caller authenticates as a user first (Device Flow if no browser) | JWT claims preserved through OBO exchange |
+| Per-user, user identified by name/email in payload | **Client Credentials** + `userName` in request body | ABS maps by data, not token claims |
 
 ---
 
