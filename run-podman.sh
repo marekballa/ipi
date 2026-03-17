@@ -29,7 +29,7 @@ podman run -d --pull always \
   -p 3215:8080 \
   -v /tmp/search-report-db:/data/db \
   -v /Users/marekb/workspace/spfo/fo-configuration-ch:/data/config \
-  -e JAVA_TOOL_OPTIONS="-Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=8800" \
+ # -e JAVA_TOOL_OPTIONS="-Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=8800" \
   -e DB_PATH="/data/db" \
   -e CONFIGURATION_BASE_PATH="/data/config/" \
   -e SPRING_PROFILES_ACTIVE="prod" \

@@ -84,6 +84,56 @@ flowchart TD
 
 ---
 
+## Programmatic / External Partner Access (TO BE)
+
+The Authorization Code + cookie flow above is **browser-only** — it requires the search-report-mfe to be in the loop. An external third-party caller (no browser, no MFE) cannot follow a redirect-based login.
+
+For service-to-service access the correct flow is **OAuth 2.0 Client Credentials** on both legs.
+
+```mermaid
+flowchart LR
+    Partner([External Partner])
+    AzureAD([Azure AD])
+    SRS[search-report-service]
+    ABS[Ansera / ABS Search API]
+
+    subgraph "Leg 1 — Partner → SRS"
+        P1["client_credentials grant\nclient_id + client_secret\nscope=api://srs-app-id/.default"]
+        P2["Bearer service token\n+ userName in request body"]
+        P1 --> P2
+    end
+
+    subgraph "Leg 2 — SRS → ABS"
+        S1["client_credentials grant\nSRS service principal\nscope=api://abs-search/.default"]
+        S2["Bearer service token\nuserName passed as payload field"]
+        S1 --> S2
+    end
+
+    Partner -->|"① token request"| P1
+    P1 -->|"token exchange"| AzureAD
+    P2 -->|"② API call"| SRS
+    SRS -->|"③ token request"| S1
+    S1 -->|"token exchange"| AzureAD
+    S2 -->|"④ POST /project/"| ABS
+```
+
+### Why Auth Code flow cannot serve this use case
+
+| Property | Auth Code + Cookie *(current, MFE)* | Client Credentials *(needed, external)* |
+|---|---|---|
+| Requires browser | ✅ Yes | ❌ No |
+| User interacts | ✅ Yes | ❌ No |
+| Token stored in cookie | ✅ Yes | ❌ No |
+| `name` from JWT claim | ✅ Available | ❌ Not available — must be explicit request field |
+| Works for external API clients | ❌ No | ✅ Yes |
+| Works for async background jobs | ❌ No | ✅ Yes |
+
+> **Key implication on user identity**: With Client Credentials there is no user JWT, so the `name` claim cannot be extracted from the token. The **caller must supply `userName` explicitly** in the API request body. This must be stored at dossier creation time and forwarded to ABS as a payload field.
+
+> **Open blocker**: ABS/Ansera must be verified to accept service-level (Client Credentials) tokens. If ABS mandates user-delegated tokens, ABS-side configuration changes are required before this architecture is viable.
+
+---
+
 # How to run
 ```
 chmod +x run.sh
