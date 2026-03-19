@@ -23,13 +23,14 @@ podman network create srs-net 2>/dev/null || true
 # ── search-report-service (backend) ──────────────────────────────────────────
 podman stop search-report-service 2>/dev/null; podman rm search-report-service 2>/dev/null
 
-podman run -d --pull always \
+# Options
+# -e JAVA_TOOL_OPTIONS="-Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=8800" \  set up proxy
+# -v /your volime/fo-configuration-ch:/data/config \ mounbt your configuration to override
+# -v /tmp/search-report-db:/data/db \  optional pvc setting
+podman run -d \
   --name search-report-service \
   --network srs-net \
   -p 3215:8080 \
-  -v /tmp/search-report-db:/data/db \
-  -v /Users/marekb/workspace/spfo/fo-configuration-ch:/data/config \
- # -e JAVA_TOOL_OPTIONS="-Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=8800" \
   -e DB_PATH="/data/db" \
   -e CONFIGURATION_BASE_PATH="/data/config/" \
   -e SPRING_PROFILES_ACTIVE="prod" \
@@ -43,7 +44,7 @@ podman run -d --pull always \
   -e OPENID_SEARCH_SCOPE="api://${AZURE_SEARCH_APP_ID}/search" \
   -e SEARCH_REPORT_SERVICE_CONTEXT_PATH="/search-report-service" \
   -e SEARCH_REPORT_SERVICE_PORT="8080" \
-  ghcr.io/$GITHUB_USER/search-report-service:develop
+  ghcr.io/marekballa/search-report-service:develop
 
 podman stop search-report-mfe 2>/dev/null; podman rm search-report-mfe 2>/dev/null
 
@@ -99,7 +100,7 @@ server {
 }
 EOF
 
-podman run -d --pull always \
+podman run -d \
   --name search-report-mfe \
   --network srs-net \
   -p 8080:8080 \
@@ -112,7 +113,7 @@ podman run -d --pull always \
   -e DTK_KEYCLOAK_REALM="" \
   -e DTK_KEYCLOAK_CLIENT="" \
   -e ENVIRONMENT="develop" \
-  ghcr.io/$GITHUB_USER/search-report-service-mfe:develop
+  ghcr.io/marekballa/search-report-service-mfe:develop
 
 # ── Access points ─────────────────────────────────────────────────────────────
 echo ""

@@ -43,7 +43,7 @@ docker run -d --pull always \
   -e OPENID_SEARCH_SCOPE="api://${AZURE_SEARCH_APP_ID}/search" \
   -e SEARCH_REPORT_SERVICE_CONTEXT_PATH="/search-report-service" \
   -e SEARCH_REPORT_SERVICE_PORT="8080" \
-  ghcr.io/$GITHUB_USER/search-report-service:develop
+  ghcr.io/marekballa/search-report-service:develop
 
 docker stop search-report-mfe 2>/dev/null; docker rm search-report-mfe 2>/dev/null
 
@@ -112,7 +112,7 @@ docker run -d --pull always \
   -e DTK_KEYCLOAK_REALM="" \
   -e DTK_KEYCLOAK_CLIENT="" \
   -e ENVIRONMENT="develop" \
-  ghcr.io/$GITHUB_USER/search-report-service-mfe:develop
+  ghcr.io/marekballa/search-report-service-mfe:develop
 
 # ── Access points ─────────────────────────────────────────────────────────────
 echo ""
