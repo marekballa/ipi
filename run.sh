@@ -22,6 +22,7 @@ docker network create srs-net 2>/dev/null || true
 
 # ── search-report-service (backend) ──────────────────────────────────────────
 docker stop search-report-service 2>/dev/null; docker rm search-report-service 2>/dev/null
+#  -e JAVA_TOOL_OPTIONS="-Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=8800" \
 
 docker run -d --pull always \
   --name search-report-service \
@@ -31,7 +32,6 @@ docker run -d --pull always \
   -v /Users/marekb/workspace/spfo/fo-configuration-ch:/data/config \
   -e DB_PATH="/data/db" \
   -e CONFIGURATION_BASE_PATH="/data/config/" \
-#  -e JAVA_TOOL_OPTIONS="-Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=8800" \
   -e SPRING_PROFILES_ACTIVE="prod" \
   -e IDENTITY_PROVIDER="azure" \
   -e APP_LOGGING_LEVEL="debug" \
@@ -63,9 +63,13 @@ server {
   gzip_min_length 0;
   gzip_types text/plain application/javascript text/css application/json application/x-javascript text/xml application/xml application/xml+rss text/javascript application/vnd.ms-fontobject application/x-font-ttf font/opentype;
 
+  # resolver required so nginx resolves container names per-request (not at startup)
+  resolver 127.0.0.11 valid=10s;
+
   # Proxy API calls to the search-report-service backend container
   location /search-report-service/ {
-    proxy_pass http://search-report-service:8080/search-report-service/;
+    set $upstream search-report-service;
+    proxy_pass http://$upstream:8080;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -122,3 +126,7 @@ echo ""
 
 docker logs -f search-report-mfe &
 docker logs -f search-report-service
+
+# Cleanup
+rm -f "$SCRIPT_DIR/nginx-templates/default.conf.template"
+rmdir "$SCRIPT_DIR/nginx-templates" 2>/dev/null || true

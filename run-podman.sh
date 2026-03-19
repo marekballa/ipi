@@ -49,8 +49,14 @@ podman run -d \
 podman stop search-report-mfe 2>/dev/null; podman rm search-report-mfe 2>/dev/null
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Detect Podman's DNS server (aardvark-dns runs on the network gateway)
+PODMAN_DNS=$(podman network inspect srs-net --format '{{range .Subnets}}{{.Gateway}}{{end}}' 2>/dev/null | head -1)
+PODMAN_DNS="${PODMAN_DNS:-10.89.0.1}"
+echo "Using DNS resolver: ${PODMAN_DNS}"
+
 mkdir -p "$SCRIPT_DIR/nginx-templates"
-cat > "$SCRIPT_DIR/nginx-templates/default.conf.template" << 'EOF'
+cat > "$SCRIPT_DIR/nginx-templates/default.conf.template" << EOF
 server {
   listen 8080;
 
@@ -64,9 +70,13 @@ server {
   gzip_min_length 0;
   gzip_types text/plain application/javascript text/css application/json application/x-javascript text/xml application/xml application/xml+rss text/javascript application/vnd.ms-fontobject application/x-font-ttf font/opentype;
 
+  # resolver required so nginx resolves container names per-request (not at startup)
+  resolver ${PODMAN_DNS} valid=10s;
+
   # Proxy API calls to the search-report-service backend container
   location /search-report-service/ {
-    proxy_pass http://search-report-service:8080/search-report-service/;
+    set $upstream search-report-service;
+    proxy_pass http://$upstream:8080;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -123,3 +133,7 @@ echo ""
 
 podman logs -f search-report-mfe &
 podman logs -f search-report-service
+
+# Cleanup
+rm -f "$SCRIPT_DIR/nginx-templates/default.conf.template"
+rmdir "$SCRIPT_DIR/nginx-templates" 2>/dev/null || true
