@@ -8,6 +8,13 @@ target/
 
 secrets
 
+### Runtime artifacts ###
+nginx-templates/
+.Dockerfile.dtk-mfe-local
+search-report-service/
+fo-configuration-ch/
+dtk-mfe/
+
 ### STS ###
 .apt_generated
 .classpath

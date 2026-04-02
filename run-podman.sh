@@ -1,67 +1,191 @@
-export GITHUB_USER="${1:-${GITHUB_USER:-}}"
-export GITHUB_TOKEN="${2:-${GITHUB_TOKEN:-}}"
-export AZURE_TENANT_ID="${3:-${AZURE_TENANT_ID:-}}"
-export AZURE_SEARCH_APP_ID="${4:-${AZURE_SEARCH_APP_ID:-}}"
+#!/usr/bin/env bash
+# ──────────────────────────────────────────────────────────────────────────────
+# run-podman.sh — Build and run search-report-service + MFE locally from source
+#
+# Prerequisites (must be installed on host):
+#   git       — clone/update repos
+#   docker    — build images and run containers (aliased as podman if needed)
+#
+# Required environment variables:
+#   IPI_TOKEN     — GitLab oauth2 token for git.epo.org (used for git clones
+#                   and as GIT_TOKEN build arg inside Dockerfile.prod)
+#
+# Optional environment variables:
+#   PROXY_HOST    — HTTP proxy host (e.g. 127.0.0.1)
+#   PROXY_PORT    — HTTP proxy port (e.g. 8800)
+#   PNPM_CACHE    — set to "true" to enable BuildKit pnpm store cache mount
+#                   for faster repeated dtk-mfe builds (default: false)
+#
+# Usage:
+#   ./run-podman.sh               — full build: sync repos, build images, start containers
+#   ./run-podman.sh restart       — skip sync + build, just restart containers from existing images
+#   ./run-podman.sh stop          — stop both containers
+#   PROXY_HOST=127.0.0.1 PROXY_PORT=8800 ./run-podman.sh
+#   PNPM_CACHE=true ./run-podman.sh
+#
+# What it does:
+#   1. Clones or fast-forward pulls: search-report-service, fo-configuration-ch, dtk-mfe
+#   2. Builds search-report-service:local  via Dockerfile.prod  (Maven build inside Docker)
+#   3. Builds search-report-mfe:local      via dtk-mfe/Dockerfile (pnpm build inside Docker)
+#   4. Starts search-report-service on :3215  (backend, mocked dossiers)
+#   5. Starts search-report-mfe on :8080      (nginx: serves MFE + proxies /search-report-service/)
+#
+# Access points after startup:
+#   Frontend : http://localhost:8080/srs (dtk mfe)
+#   Backend  : http://localhost:8080/search-report-service  (main entry point)
+#              http://localhost:3215/search-report-service  (direct, for debugging)
+# ──────────────────────────────────────────────────────────────────────────────
+set -e
 
-if [ -z "$GITHUB_USER" ] || [ -z "$GITHUB_TOKEN" ]; then
-  echo "Usage: ./run-podman.sh <github-user> <github-token> <azure-tenant-id> <azure-search-app-id>"
-  echo "   or: GITHUB_USER=x GITHUB_TOKEN=y AZURE_TENANT_ID=z AZURE_SEARCH_APP_ID=w ./run-podman.sh"
-  exit 1
+MODE="${1:-build}"  # build | restart | stop
+
+# Optional proxy: PROXY_HOST=host PROXY_PORT=port ./run-podman.sh
+export PROXY_HOST="${PROXY_HOST:-}"
+export PROXY_PORT="${PROXY_PORT:-}"
+
+# Use docker if podman is not installed
+if ! command -v podman &>/dev/null; then
+  podman() { docker "$@"; }
 fi
 
-if [ -z "$AZURE_TENANT_ID" ] || [ -z "$AZURE_SEARCH_APP_ID" ]; then
-  echo "Error: AZURE_TENANT_ID and AZURE_SEARCH_APP_ID must be set"
-  exit 1
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPOS_DIR="$SCRIPT_DIR"
+
+if [ "$MODE" = "stop" ]; then
+  echo "Stopping containers..."
+  podman stop search-report-service 2>/dev/null || true
+  podman stop search-report-mfe 2>/dev/null || true
+  exit 0
 fi
 
-# ── Auth ──────────────────────────────────────────────────────────────────────
-#echo "$GITHUB_TOKEN" | podman login ghcr.io -u "$GITHUB_USER" --password-stdin
+if [ "$MODE" = "restart" ]; then
+  echo "Restart mode — skipping sync and build, restarting containers from existing images."
+else
+  if [ -z "$IPI_TOKEN" ]; then
+    echo "Error: IPI_TOKEN must be set (export IPI_TOKEN=<your-token>)"
+    exit 1
+  fi
+
+  # Used as GIT_PASSWORD inside the dtk-mfe Docker build for cloning from git.epo.org
+  export GITLAB_TOKEN="${IPI_TOKEN}"
+
+  # ── Proxy args (optional) ───────────────────────────────────────────────────
+  GIT_PROXY_ARGS=""
+  DOCKER_PROXY_ARGS=""
+  if [ -n "$PROXY_HOST" ] && [ -n "$PROXY_PORT" ]; then
+    GIT_PROXY_ARGS="-c http.proxy=http://${PROXY_HOST}:${PROXY_PORT} -c https.proxy=http://${PROXY_HOST}:${PROXY_PORT}"
+    # Docker predefined proxy args — auto-applied to all RUN commands (git, wget, apk, npm, pnpm)
+    # PROXY_HOST/PORT also passed for Maven inside Dockerfile.prod
+    DOCKER_PROXY_ARGS="--build-arg HTTP_PROXY=http://${PROXY_HOST}:${PROXY_PORT} --build-arg HTTPS_PROXY=http://${PROXY_HOST}:${PROXY_PORT} --build-arg PROXY_HOST=${PROXY_HOST} --build-arg PROXY_PORT=${PROXY_PORT}"
+  fi
+
+  # ── Clone or pull a repo ─────────────────────────────────────────────────────
+  # Usage: sync_repo <dir> <repo-url>
+  sync_repo() {
+    local dir="$1"
+    local url="$2"
+    # Embed token for GitLab oauth2 auth
+    local auth_url
+    auth_url=$(echo "$url" | sed "s|https://|https://oauth2:${IPI_TOKEN}@|")
+
+    if [ ! -d "$dir/.git" ]; then
+      echo "Cloning $(basename "$dir")..."
+      git $GIT_PROXY_ARGS clone "$auth_url" "$dir"
+    else
+      echo "Updating $(basename "$dir")..."
+      git -C "$dir" $GIT_PROXY_ARGS fetch origin
+      # Only reset if there are no local (uncommitted) changes
+      if git -C "$dir" diff --quiet && git -C "$dir" diff --cached --quiet; then
+        git -C "$dir" reset --hard origin/$(git -C "$dir" rev-parse --abbrev-ref HEAD)
+      else
+        echo "  → local changes detected in $(basename "$dir"), skipping reset"
+      fi
+    fi
+  }
+
+  # ── Sync repos ──────────────────────────────────────────────────────────────
+  sync_repo "$REPOS_DIR/search-report-service"   "https://git.epo.org/it-cooperation/search-report-service.git"
+  sync_repo "$REPOS_DIR/fo-configuration-ch"    "https://git.epo.org/it-cooperation/fo-configuration-ch.git"
+  sync_repo "$REPOS_DIR/dtk-mfe"                "https://git.epo.org/it-cooperation/dtk-mfe.git"
+
+  # ── Build search-report-service Docker image (Dockerfile.prod builds JAR internally) ──
+  # Dockerfile.prod expects a config/ dir and .build-libs/ (proprietary JARs) in the build context
+  mkdir -p "$REPOS_DIR/search-report-service/config"
+  mkdir -p "$REPOS_DIR/search-report-service/.build-libs"
+  cp "$SCRIPT_DIR/iaik_jce-signed-4.0.jar" "$REPOS_DIR/search-report-service/.build-libs/"
+
+  echo "Building search-report-service image..."
+  podman build --no-cache \
+    -f "$REPOS_DIR/search-report-service/Dockerfile.prod" \
+    --build-arg GIT_TOKEN="${IPI_TOKEN}" \
+    $DOCKER_PROXY_ARGS \
+    -t search-report-service:local \
+    "$REPOS_DIR/search-report-service"
+
+  echo "Done — image: search-report-service:local"
+
+  # ── Build dtk-mfe image ─────────────────────────────────────────────────────
+  # Optional: PNPM_CACHE=true ./run-podman.sh — patches the Dockerfile locally to
+  # add a BuildKit cache mount for the pnpm store, speeding up repeated builds.
+  DTK_DOCKERFILE="$REPOS_DIR/dtk-mfe/Dockerfile"
+  if [ "${PNPM_CACHE:-false}" = "true" ]; then
+    echo "Using pnpm BuildKit cache mount..."
+    sed 's|RUN pnpm run docker:init|RUN --mount=type=cache,target=/root/.local/share/pnpm/store pnpm run docker:init|' \
+      "$DTK_DOCKERFILE" > "$SCRIPT_DIR/.Dockerfile.dtk-mfe-local"
+    DTK_DOCKERFILE="$SCRIPT_DIR/.Dockerfile.dtk-mfe-local"
+  fi
+
+  echo "Building dtk-mfe image..."
+  podman build \
+    -f "$DTK_DOCKERFILE" \
+    --build-arg DTK_REPO_REF=develop \
+    --build-arg DTK_FE_COMMON_REF=develop \
+    --build-arg GIT_USERNAME=oauth2 \
+    --build-arg GIT_PASSWORD="${GITLAB_TOKEN}" \
+    $DOCKER_PROXY_ARGS \
+    -t search-report-mfe:local \
+    "$REPOS_DIR/dtk-mfe"
+
+  rm -f "$SCRIPT_DIR/.Dockerfile.dtk-mfe-local"
+fi  # end build mode
 
 # ── Shared network (allows MFE nginx to proxy to backend by container name) ───
 podman network create srs-net 2>/dev/null || true
 
 # ── search-report-service (backend) ──────────────────────────────────────────
-podman stop search-report-service 2>/dev/null; podman rm search-report-service 2>/dev/null
+podman stop search-report-service 2>/dev/null || true; podman rm search-report-service 2>/dev/null || true
 
-# Options
-# -e JAVA_TOOL_OPTIONS="-Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=8800" \  set up proxy
-# -v /your volime/fo-configuration-ch:/data/config \ mounbt your configuration to override
-# -v /tmp/search-report-db:/data/db \  optional pvc setting
 podman run -d \
   --name search-report-service \
   --network srs-net \
   -p 3215:8080 \
+  -v "$REPOS_DIR/fo-configuration-ch:/data/config" \
   -e DB_PATH="/data/db" \
   -e CONFIGURATION_BASE_PATH="/data/config/" \
   -e SPRING_PROFILES_ACTIVE="prod" \
   -e IDENTITY_PROVIDER="azure" \
   -e APP_LOGGING_LEVEL="debug" \
   -e DOSSIER_MOCK_ENABLED="true" \
-  -e OPENID_ISSUER_URI="https://login.microsoftonline.com/${AZURE_TENANT_ID}/v2.0" \
+  -e OPENID_ISSUER_URI="https://login.microsoftonline.com/b16225bd-49b8-4999-b571-c19a911ae1ec/v2.0" \
   -e OPENID_CLIENT_ID="AZURE_CLIENT_ID" \
   -e OPENID_CLIENT_SECRET="AZURE_CLIENT_SECRET" \
   -e OPENID_REDIRECT_URI="https://YOUR_DOMAIN/search-report-service/" \
-  -e OPENID_SEARCH_SCOPE="api://${AZURE_SEARCH_APP_ID}/search" \
+  -e OPENID_SEARCH_SCOPE="api://a87b6d3d-d85e-4d9b-8704-6aed76a49444/search" \
   -e SEARCH_REPORT_SERVICE_CONTEXT_PATH="/search-report-service" \
   -e SEARCH_REPORT_SERVICE_PORT="8080" \
-  ghcr.io/marekballa/search-report-service:develop
+  search-report-service:local
 
-podman stop search-report-mfe 2>/dev/null; podman rm search-report-mfe 2>/dev/null
+# ── search-report-mfe (frontend) ─────────────────────────────────────────────
+podman stop search-report-mfe 2>/dev/null || true; podman rm search-report-mfe 2>/dev/null || true
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-
-# Detect Podman's DNS server (aardvark-dns runs on the network gateway)
-PODMAN_DNS=$(podman network inspect srs-net --format '{{range .Subnets}}{{.Gateway}}{{end}}' 2>/dev/null | head -1)
-PODMAN_DNS="${PODMAN_DNS:-10.89.0.1}"
-echo "Using DNS resolver: ${PODMAN_DNS}"
-
+# Docker user-defined networks use 127.0.0.11 as the embedded DNS resolver,
+# allowing nginx to resolve container names (e.g. search-report-service) at request time.
 mkdir -p "$SCRIPT_DIR/nginx-templates"
-cat > "$SCRIPT_DIR/nginx-templates/default.conf.template" << EOF
+cat > "$SCRIPT_DIR/nginx-templates/default.conf.template" << 'EOF'
 server {
   listen 8080;
 
   gzip on;
-  gzip_disable "msie6";
   gzip_vary on;
   gzip_proxied any;
   gzip_comp_level 6;
@@ -70,10 +194,8 @@ server {
   gzip_min_length 0;
   gzip_types text/plain application/javascript text/css application/json application/x-javascript text/xml application/xml application/xml+rss text/javascript application/vnd.ms-fontobject application/x-font-ttf font/opentype;
 
-  # resolver required so nginx resolves container names per-request (not at startup)
-  resolver ${PODMAN_DNS} valid=10s;
+  resolver 127.0.0.11 valid=10s;
 
-  # Proxy API calls to the search-report-service backend container
   location /search-report-service/ {
     set $upstream search-report-service;
     proxy_pass http://$upstream:8080;
@@ -123,7 +245,7 @@ podman run -d \
   -e DTK_KEYCLOAK_REALM="" \
   -e DTK_KEYCLOAK_CLIENT="" \
   -e ENVIRONMENT="develop" \
-  ghcr.io/marekballa/search-report-service-mfe:develop
+  search-report-mfe:local
 
 # ── Access points ─────────────────────────────────────────────────────────────
 echo ""
