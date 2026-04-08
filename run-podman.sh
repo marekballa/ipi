@@ -108,6 +108,11 @@ else
   sync_repo "$REPOS_DIR/fo-configuration-ch"    "https://git.epo.org/it-cooperation/fo-configuration-ch.git"
   sync_repo "$REPOS_DIR/dtk-mfe"                "https://git.epo.org/it-cooperation/dtk-mfe.git"
 
+  # Patch importmap.json to serve MFE bundles from local nginx instead of GCS
+  sed -i '' \
+    's|https://storage.googleapis.com/[^"]*develop/|{{basePath}}/artifacts/|g' \
+    "$REPOS_DIR/fo-configuration-ch/apps/back-office/-shell/importmap.json"
+
   # ── Build search-report-service Docker image (Dockerfile.prod builds JAR internally) ──
   # Dockerfile.prod expects a config/ dir and .build-libs/ (proprietary JARs) in the build context
   mkdir -p "$REPOS_DIR/search-report-service/config"
