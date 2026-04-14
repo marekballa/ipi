@@ -13,6 +13,8 @@
 # Optional environment variables:
 #   PROXY_HOST    — HTTP proxy host (e.g. 127.0.0.1)
 #   PROXY_PORT    — HTTP proxy port (e.g. 8800)
+#   PROXY_USER    — proxy username (optional, if proxy requires auth)
+#   PROXY_PASS    — proxy password (optional, if proxy requires auth)
 #   PNPM_CACHE    — set to "true" to enable BuildKit pnpm store cache mount
 #                   for faster repeated dtk-mfe builds (default: false)
 #
@@ -21,7 +23,7 @@
 #   ./run-podman.sh restart       — skip sync + build, just restart containers from existing images
 #   ./run-podman.sh stop          — stop both containers
 #   PROXY_HOST=127.0.0.1 PROXY_PORT=8800 ./run-podman.sh
-#   PNPM_CACHE=true ./run-podman.sh
+#   is
 #
 # What it does:
 #   1. Clones or fast-forward pulls: search-report-service, fo-configuration-ch, dtk-mfe
@@ -39,9 +41,11 @@ set -e
 
 MODE="${1:-build}"  # build | restart | stop
 
-# Optional proxy: PROXY_HOST=host PROXY_PORT=port ./run-podman.sh
+# Optional proxy: PROXY_HOST=host PROXY_PORT=port [PROXY_USER=u PROXY_PASS=p] ./run-podman.sh
 export PROXY_HOST="${PROXY_HOST:-}"
 export PROXY_PORT="${PROXY_PORT:-}"
+export PROXY_USER="${PROXY_USER:-}"
+export PROXY_PASS="${PROXY_PASS:-}"
 
 # Use docker if podman is not installed
 if ! command -v podman &>/dev/null; then
@@ -73,10 +77,16 @@ else
   GIT_PROXY_ARGS=""
   DOCKER_PROXY_ARGS=""
   if [ -n "$PROXY_HOST" ] && [ -n "$PROXY_PORT" ]; then
-    GIT_PROXY_ARGS="-c http.proxy=http://${PROXY_HOST}:${PROXY_PORT} -c https.proxy=http://${PROXY_HOST}:${PROXY_PORT}"
+    # Build proxy URL with optional credentials: http://[user:pass@]host:port
+    if [ -n "$PROXY_USER" ] && [ -n "$PROXY_PASS" ]; then
+      PROXY_URL="http://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}"
+    else
+      PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"
+    fi
+    GIT_PROXY_ARGS="-c http.proxy=${PROXY_URL} -c https.proxy=${PROXY_URL}"
     # Docker predefined proxy args — auto-applied to all RUN commands (git, wget, apk, npm, pnpm)
     # PROXY_HOST/PORT also passed for Maven inside Dockerfile.prod
-    DOCKER_PROXY_ARGS="--build-arg HTTP_PROXY=http://${PROXY_HOST}:${PROXY_PORT} --build-arg HTTPS_PROXY=http://${PROXY_HOST}:${PROXY_PORT} --build-arg PROXY_HOST=${PROXY_HOST} --build-arg PROXY_PORT=${PROXY_PORT}"
+    DOCKER_PROXY_ARGS="--build-arg HTTP_PROXY=${PROXY_URL} --build-arg HTTPS_PROXY=${PROXY_URL} --build-arg PROXY_HOST=${PROXY_HOST} --build-arg PROXY_PORT=${PROXY_PORT}"
   fi
 
   # ── Clone or pull a repo ─────────────────────────────────────────────────────
@@ -130,14 +140,35 @@ else
   echo "Done — image: search-report-service:local"
 
   # ── Build dtk-mfe image ─────────────────────────────────────────────────────
-  # Optional: PNPM_CACHE=true ./run-podman.sh — patches the Dockerfile locally to
-  # add a BuildKit cache mount for the pnpm store, speeding up repeated builds.
+  # Patch dtk-mfe/Dockerfile locally for corporate SSL inspection environments:
+  #   - apk: switch Alpine repos to HTTP (corporate proxy replaces HTTPS certs, CA not trusted in container)
+  #   - npm: disable strict-ssl before installing pnpm
+  #   - pnpm/Node: NODE_TLS_REJECT_UNAUTHORIZED=0 for all pnpm installs inside docker:init
+  # Also optionally add pnpm BuildKit cache mount (PNPM_CACHE=true).
   DTK_DOCKERFILE="$REPOS_DIR/dtk-mfe/Dockerfile"
+  cp "$DTK_DOCKERFILE" "$SCRIPT_DIR/.Dockerfile.dtk-mfe-local"
+  DTK_DOCKERFILE="$SCRIPT_DIR/.Dockerfile.dtk-mfe-local"
+
+  # Patch the Dockerfile via awk — avoids macOS BSD sed misinterpreting '|' inside
+  # replacement strings as delimiters, which causes "bad flag in substitute command: 'h'".
+  # awk is a POSIX standard tool available on all macOS/Linux hosts without installation.
+  awk '{
+    if ($0 == "RUN apk add --no-cache git")
+      print "RUN sed -i \"s|https://|http://|g\" /etc/apk/repositories && apk add --no-cache git"
+    else if ($0 == "RUN npm install -g pnpm")
+      print "RUN npm config set strict-ssl false && npm install -g pnpm"
+    else
+      print
+    if ($0 ~ /^ENV NODE_ENV=/)
+      print "ENV NODE_TLS_REJECT_UNAUTHORIZED=0"
+  }' "$DTK_DOCKERFILE" > "${DTK_DOCKERFILE}.tmp" && mv "${DTK_DOCKERFILE}.tmp" "$DTK_DOCKERFILE"
+
   if [ "${PNPM_CACHE:-false}" = "true" ]; then
     echo "Using pnpm BuildKit cache mount..."
-    sed 's|RUN pnpm run docker:init|RUN --mount=type=cache,target=/root/.local/share/pnpm/store pnpm run docker:init|' \
-      "$DTK_DOCKERFILE" > "$SCRIPT_DIR/.Dockerfile.dtk-mfe-local"
-    DTK_DOCKERFILE="$SCRIPT_DIR/.Dockerfile.dtk-mfe-local"
+    awk '{
+      gsub(/RUN pnpm run docker:init/, "RUN --mount=type=cache,target=/root/.local/share/pnpm/store pnpm run docker:init")
+      print
+    }' "$DTK_DOCKERFILE" > "${DTK_DOCKERFILE}.tmp" && mv "${DTK_DOCKERFILE}.tmp" "$DTK_DOCKERFILE"
   fi
 
   echo "Building dtk-mfe image..."
