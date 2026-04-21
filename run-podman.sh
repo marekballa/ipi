@@ -198,12 +198,14 @@ else
   awk '{
     if ($0 == "RUN apk add --no-cache git")
       print "RUN sed -i \"s|https://|http://|g\" /etc/apk/repositories && apk add --no-cache git"
-    else if ($0 == "RUN npm install -g pnpm")
-      print "RUN npm config set strict-ssl false && npm install -g pnpm"
+    else if ($0 ~ /^RUN npm install -g pnpm/)
+      print "RUN npm config set strict-ssl false && " substr($0, 5)
     else
       print
-    if ($0 ~ /^ENV NODE_ENV=/)
+    if ($0 ~ /^ENV NODE_ENV=/) {
       print "ENV NODE_TLS_REJECT_UNAUTHORIZED=0"
+      print "ENV GIT_SSL_NO_VERIFY=true"
+    }
   }' "$DTK_DOCKERFILE" > "${DTK_DOCKERFILE}.tmp" && mv "${DTK_DOCKERFILE}.tmp" "$DTK_DOCKERFILE"
 
   if [ "${PNPM_CACHE:-false}" = "true" ]; then
