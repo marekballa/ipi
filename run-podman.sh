@@ -55,6 +55,46 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPOS_DIR="$SCRIPT_DIR"
 
+# ── System diagnostics ────────────────────────────────────────────────────────
+echo "=== System ==="
+uname -a || true
+echo ""
+
+echo "=== Container runtime ==="
+if command -v podman &>/dev/null; then
+  echo "podman: $(podman --version)"
+else
+  echo "podman: not found, using docker"
+  docker --version || true
+fi
+echo ""
+
+echo "=== Proxy environment ==="
+for var in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy; do
+  val="${!var:-}"
+  if [ -n "$val" ]; then
+    echo "  $var=$val"
+  else
+    echo "  $var=(not set)"
+  fi
+done
+echo ""
+
+echo "=== Network connectivity ==="
+if command -v curl &>/dev/null; then
+  curl -s -o /dev/null -w "  docker.io:      HTTP %{http_code} (via %{local_ip})\n" --max-time 5 https://registry-1.docker.io/v2/ || echo "  docker.io:      unreachable"
+  curl -s -o /dev/null -w "  git.epo.org:    HTTP %{http_code}\n" --max-time 5 https://git.epo.org || echo "  git.epo.org:    unreachable"
+  curl -s -o /dev/null -w "  dl-cdn.alpinelinux.org: HTTP %{http_code}\n" --max-time 5 https://dl-cdn.alpinelinux.org || echo "  dl-cdn.alpinelinux.org: unreachable"
+elif command -v wget &>/dev/null; then
+  wget -q --spider --timeout=5 https://registry-1.docker.io/v2/ 2>&1 | head -1 || true
+  wget -q --spider --timeout=5 https://git.epo.org 2>&1 | head -1 || true
+else
+  echo "  (curl and wget not available — skipping)"
+fi
+echo ""
+echo "============================================"
+echo ""
+
 if [ "$MODE" = "stop" ]; then
   echo "Stopping containers..."
   podman stop search-report-service 2>/dev/null || true
@@ -87,6 +127,9 @@ else
     # Docker predefined proxy args — auto-applied to all RUN commands (git, wget, apk, npm, pnpm)
     # PROXY_HOST/PORT also passed for Maven inside Dockerfile.prod
     DOCKER_PROXY_ARGS="--build-arg HTTP_PROXY=${PROXY_URL} --build-arg HTTPS_PROXY=${PROXY_URL} --build-arg PROXY_HOST=${PROXY_HOST} --build-arg PROXY_PORT=${PROXY_PORT}"
+    echo "Proxy: ${PROXY_URL}"
+  else
+    echo "Proxy: none (set PROXY_HOST and PROXY_PORT to enable)"
   fi
 
   # ── Clone or pull a repo ─────────────────────────────────────────────────────
