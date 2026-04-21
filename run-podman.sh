@@ -216,6 +216,11 @@ else
     }' "$DTK_DOCKERFILE" > "${DTK_DOCKERFILE}.tmp" && mv "${DTK_DOCKERFILE}.tmp" "$DTK_DOCKERFILE"
   fi
 
+  echo "=== Patched dtk-mfe Dockerfile ==="
+  cat "$DTK_DOCKERFILE"
+  echo "=================================="
+  echo ""
+
   echo "Building dtk-mfe image..."
   podman build \
     -f "$DTK_DOCKERFILE" \
