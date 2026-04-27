@@ -238,9 +238,17 @@ fi  # end build mode
 # ── Shared network (allows MFE nginx to proxy to backend by container name) ───
 podman network create srs-net 2>/dev/null || true
 
+# Detect the DNS resolver IP for this network:
+#   Docker:  always 127.0.0.11 (embedded resolver)
+#   Podman:  aardvark-dns runs on the network gateway (e.g. 10.89.0.1)
+NGINX_RESOLVER=$(podman network inspect srs-net --format '{{range .Subnets}}{{.Gateway}}{{end}}' 2>/dev/null)
+[ -z "$NGINX_RESOLVER" ] && NGINX_RESOLVER="127.0.0.11"
+echo "nginx resolver: $NGINX_RESOLVER"
+
 # ── search-report-service (backend) ──────────────────────────────────────────
 podman stop search-report-service 2>/dev/null || true; podman rm search-report-service 2>/dev/null || true
 
+echo "Starting search-report-service..."
 podman run -d \
   --name search-report-service \
   --network srs-net \
@@ -260,12 +268,11 @@ podman run -d \
   -e SEARCH_REPORT_SERVICE_CONTEXT_PATH="/search-report-service" \
   -e SEARCH_REPORT_SERVICE_PORT="8080" \
   search-report-service:local
+echo "Done — container: search-report-service"
 
 # ── search-report-mfe (frontend) ─────────────────────────────────────────────
 podman stop search-report-mfe 2>/dev/null || true; podman rm search-report-mfe 2>/dev/null || true
 
-# Docker user-defined networks use 127.0.0.11 as the embedded DNS resolver,
-# allowing nginx to resolve container names (e.g. search-report-service) at request time.
 mkdir -p "$SCRIPT_DIR/nginx-templates"
 cat > "$SCRIPT_DIR/nginx-templates/default.conf.template" << 'EOF'
 server {
@@ -280,7 +287,7 @@ server {
   gzip_min_length 0;
   gzip_types text/plain application/javascript text/css application/json application/x-javascript text/xml application/xml application/xml+rss text/javascript application/vnd.ms-fontobject application/x-font-ttf font/opentype;
 
-  resolver 127.0.0.11 valid=10s;
+  resolver __NGINX_RESOLVER__ valid=10s;
 
   location /search-report-service/ {
     set $upstream search-report-service;
@@ -317,7 +324,13 @@ server {
   }
 }
 EOF
+sed -i "s/__NGINX_RESOLVER__/${NGINX_RESOLVER}/" "$SCRIPT_DIR/nginx-templates/default.conf.template"
+echo "=== nginx config ==="
+cat "$SCRIPT_DIR/nginx-templates/default.conf.template"
+echo "===================="
+echo ""
 
+echo "Starting search-report-mfe..."
 podman run -d \
   --name search-report-mfe \
   --network srs-net \
@@ -332,11 +345,14 @@ podman run -d \
   -e DTK_KEYCLOAK_CLIENT="" \
   -e ENVIRONMENT="develop" \
   search-report-mfe:local
+echo "Done — container: search-report-mfe"
 
 # ── Access points ─────────────────────────────────────────────────────────────
 echo ""
 echo "  Frontend:  http://localhost:8080/srs"
 echo "  Backend:   http://localhost:3215/search-report-service  (direct, for debugging)"
+echo ""
+echo "Following logs (Ctrl+C to stop)..."
 echo ""
 
 podman logs -f search-report-mfe &
