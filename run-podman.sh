@@ -297,11 +297,8 @@ server {
   gzip_min_length 0;
   gzip_types text/plain application/javascript text/css application/json application/x-javascript text/xml application/xml application/xml+rss text/javascript application/vnd.ms-fontobject application/x-font-ttf font/opentype;
 
-  resolver __NGINX_RESOLVER__ valid=10s;
-
   location /search-report-service/ {
-    set $upstream search-report-service;
-    proxy_pass http://$upstream:8080;
+    proxy_pass http://search-report-service:8080;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -334,7 +331,7 @@ server {
   }
 }
 EOF
-sed -i "s/__NGINX_RESOLVER__/${NGINX_RESOLVER}/" "$SCRIPT_DIR/nginx-templates/default.conf.template"
+sed "s/__NGINX_RESOLVER__/${NGINX_RESOLVER}/" "$SCRIPT_DIR/nginx-templates/default.conf.template" > /tmp/nginx-conf.tmp && mv /tmp/nginx-conf.tmp "$SCRIPT_DIR/nginx-templates/default.conf.template"
 echo "=== nginx config ==="
 cat "$SCRIPT_DIR/nginx-templates/default.conf.template"
 echo "===================="
