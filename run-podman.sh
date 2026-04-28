@@ -146,12 +146,17 @@ else
       git $GIT_PROXY_ARGS clone "$auth_url" "$dir"
     else
       echo "Updating $(basename "$dir")..."
-      git -C "$dir" $GIT_PROXY_ARGS fetch origin
-      # Only reset if there are no local (uncommitted) changes
-      if git -C "$dir" diff --quiet && git -C "$dir" diff --cached --quiet; then
-        git -C "$dir" reset --hard origin/$(git -C "$dir" rev-parse --abbrev-ref HEAD)
+      if ! git -C "$dir" $GIT_PROXY_ARGS fetch origin; then
+        echo "  → fetch failed, re-cloning $(basename "$dir")..."
+        rm -rf "$dir"
+        git $GIT_PROXY_ARGS clone "$auth_url" "$dir"
       else
-        echo "  → local changes detected in $(basename "$dir"), skipping reset"
+        # Only reset if there are no local (uncommitted) changes
+        if git -C "$dir" diff --quiet && git -C "$dir" diff --cached --quiet; then
+          git -C "$dir" reset --hard origin/$(git -C "$dir" rev-parse --abbrev-ref HEAD)
+        else
+          echo "  → local changes detected in $(basename "$dir"), skipping reset"
+        fi
       fi
     fi
   }
@@ -163,8 +168,13 @@ else
 
   # Patch importmap.json to serve MFE bundles from local nginx instead of GCS
   IMPORTMAP="$REPOS_DIR/fo-configuration-ch/apps/back-office/-shell/importmap.json"
-  sed -i.bak 's|https://storage.googleapis.com/[^"]*develop/|{{basePath}}/artifacts/|g' "$IMPORTMAP"
-  rm -f "$IMPORTMAP.bak"
+  if [ -f "$IMPORTMAP" ]; then
+    sed -i.bak 's|https://storage.googleapis.com/[^"]*develop/|{{basePath}}/artifacts/|g' "$IMPORTMAP"
+    rm -f "$IMPORTMAP.bak"
+    echo "Patched importmap.json"
+  else
+    echo "WARNING: importmap.json not found at $IMPORTMAP — skipping patch"
+  fi
 
   # ── Build search-report-service Docker image (Dockerfile.prod builds JAR internally) ──
   # Dockerfile.prod expects a config/ dir and .build-libs/ (proprietary JARs) in the build context
