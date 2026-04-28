@@ -123,7 +123,7 @@ else
     else
       PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"
     fi
-    GIT_PROXY_ARGS="-c http.proxy=${PROXY_URL} -c https.proxy=${PROXY_URL}"
+    GIT_PROXY_ARGS="-c http.proxy=${PROXY_URL} -c https.proxy=${PROXY_URL} -c http.sslVerify=false"
     # Docker predefined proxy args — auto-applied to all RUN commands (git, wget, apk, npm, pnpm)
     # PROXY_HOST/PORT also passed for Maven inside Dockerfile.prod
     DOCKER_PROXY_ARGS="--build-arg HTTP_PROXY=${PROXY_URL} --build-arg HTTPS_PROXY=${PROXY_URL} --build-arg PROXY_HOST=${PROXY_HOST} --build-arg PROXY_PORT=${PROXY_PORT}"
