@@ -47,6 +47,18 @@ export PROXY_PORT="${PROXY_PORT:-}"
 export PROXY_USER="${PROXY_USER:-}"
 export PROXY_PASS="${PROXY_PASS:-}"
 
+# OpenID credentials — when both are provided, real Azure auth is used and mock is disabled
+export OPENID_CLIENT_ID="${OPENID_CLIENT_ID:-}"
+export OPENID_CLIENT_SECRET="${OPENID_CLIENT_SECRET:-}"
+export OPENID_REDIRECT_URI="${OPENID_REDIRECT_URI:-https://YOUR_DOMAIN/search-report-service/api/oauth/callback}"
+if [ -n "$OPENID_CLIENT_ID" ] && [ -n "$OPENID_CLIENT_SECRET" ]; then
+  DOSSIER_MOCK_ENABLED="false"
+  echo "OpenID credentials provided — mock disabled, real auth enabled"
+else
+  DOSSIER_MOCK_ENABLED="true"
+  echo "OpenID credentials not set — running in mock mode (DOSSIER_MOCK_ENABLED=true)"
+fi
+
 # Use docker if podman is not installed
 if ! command -v podman &>/dev/null; then
   podman() { docker "$@"; }
@@ -177,10 +189,7 @@ else
   fi
 
   # ── Build search-report-service Docker image (Dockerfile.prod builds JAR internally) ──
-  # Dockerfile.prod expects a config/ dir and .build-libs/ (proprietary JARs) in the build context
   mkdir -p "$REPOS_DIR/search-report-service/config"
-  mkdir -p "$REPOS_DIR/search-report-service/.build-libs"
-  cp "$SCRIPT_DIR/iaik_jce-signed-4.0.jar" "$REPOS_DIR/search-report-service/.build-libs/"
 
   echo "Building search-report-service image..."
   podman build --no-cache \
@@ -269,11 +278,11 @@ podman run -d \
   -e SPRING_PROFILES_ACTIVE="prod" \
   -e IDENTITY_PROVIDER="azure" \
   -e APP_LOGGING_LEVEL="debug" \
-  -e DOSSIER_MOCK_ENABLED="true" \
+  -e DOSSIER_MOCK_ENABLED="${DOSSIER_MOCK_ENABLED}" \
   -e OPENID_ISSUER_URI="https://login.microsoftonline.com/b16225bd-49b8-4999-b571-c19a911ae1ec/v2.0" \
-  -e OPENID_CLIENT_ID="AZURE_CLIENT_ID" \
-  -e OPENID_CLIENT_SECRET="AZURE_CLIENT_SECRET" \
-  -e OPENID_REDIRECT_URI="https://YOUR_DOMAIN/search-report-service/" \
+  -e OPENID_CLIENT_ID="${OPENID_CLIENT_ID}" \
+  -e OPENID_CLIENT_SECRET="${OPENID_CLIENT_SECRET}" \
+  -e OPENID_REDIRECT_URI="${OPENID_REDIRECT_URI}" \
   -e OPENID_SEARCH_SCOPE="api://a87b6d3d-d85e-4d9b-8704-6aed76a49444/search" \
   -e SEARCH_REPORT_SERVICE_CONTEXT_PATH="/search-report-service" \
   -e SEARCH_REPORT_SERVICE_PORT="8080" \
