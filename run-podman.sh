@@ -357,7 +357,7 @@ echo "Starting search-report-mfe..."
 podman run -d \
   --name search-report-mfe \
   --network srs-net \
-  -p 8080:8080 \
+  -p 80:8080 \
   -v "$SCRIPT_DIR/nginx-templates:/etc/nginx/templates" \
   -e DTK_BASE_PATH="/srs" \
   -e DTK_SHELL_ID="back-office" \
