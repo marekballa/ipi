@@ -33,8 +33,8 @@
 #   5. Starts search-report-mfe on :8080      (nginx: serves MFE + proxies /search-report-service/)
 #
 # Access points after startup:
-#   Frontend : http://localhost:8080/srs (dtk mfe)
-#   Backend  : http://localhost:8080/search-report-service  (main entry point)
+#   Frontend : http://localhost:80/srs (dtk mfe)
+#   Backend  : http://localhost:80/search-report-service  (main entry point)
 #              http://localhost:3215/search-report-service  (direct, for debugging)
 # ──────────────────────────────────────────────────────────────────────────────
 set -e
@@ -372,7 +372,7 @@ echo "Done — container: search-report-mfe"
 
 # ── Access points ─────────────────────────────────────────────────────────────
 echo ""
-echo "  Frontend:  http://localhost:8080/srs"
+echo "  Frontend:  http://localhost:80/srs"
 echo "  Backend:   http://localhost:3215/search-report-service  (direct, for debugging)"
 echo ""
 echo "Following logs (Ctrl+C to stop)..."
