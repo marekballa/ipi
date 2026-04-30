@@ -286,7 +286,7 @@ podman run -d \
   -e IDENTITY_PROVIDER="azure" \
   -e APP_LOGGING_LEVEL="debug" \
   -e DOSSIER_MOCK_ENABLED="${DOSSIER_MOCK_ENABLED}" \
-  -e OPENID_ISSUER_URI="https://login.microsoftonline.com/32bd6411-706b-4e3e-b6fc-c0f8ed7920b6/v2.0" \
+  -e OPENID_ISSUER_URI="https://login.microsoftonline.com/a87b6d3d-d85e-4d9b-8704-6aed76a49444/v2.0" \
   -e OPENID_CLIENT_ID="${OPENID_CLIENT_ID}" \
   -e OPENID_CLIENT_SECRET="${OPENID_CLIENT_SECRET}" \
   -e OPENID_REDIRECT_URI="${OPENID_REDIRECT_URI}" \
