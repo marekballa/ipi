@@ -46,6 +46,11 @@ export PROXY_HOST="${PROXY_HOST:-}"
 export PROXY_PORT="${PROXY_PORT:-}"
 export PROXY_USER="${PROXY_USER:-}"
 export PROXY_PASS="${PROXY_PASS:-}"
+if [ -n "$PROXY_HOST" ] && [ -n "$PROXY_PORT" ]; then
+  echo "Proxy configured: http://${PROXY_HOST}:${PROXY_PORT}"
+else
+  echo "Proxy: not configured (PROXY_HOST=${PROXY_HOST:-<empty>} PROXY_PORT=${PROXY_PORT:-<empty>})"
+fi
 
 # OpenID credentials — when both are provided, real Azure auth is used and mock is disabled
 export OPENID_CLIENT_ID="${OPENID_CLIENT_ID:-}"
@@ -82,6 +87,8 @@ fi
 echo ""
 
 echo "=== Proxy environment ==="
+echo "  PROXY_HOST=${PROXY_HOST:-(not set)}"
+echo "  PROXY_PORT=${PROXY_PORT:-(not set)}"
 for var in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy; do
   val="${!var:-}"
   if [ -n "$val" ]; then
@@ -279,7 +286,7 @@ podman run -d \
   -e IDENTITY_PROVIDER="azure" \
   -e APP_LOGGING_LEVEL="debug" \
   -e DOSSIER_MOCK_ENABLED="${DOSSIER_MOCK_ENABLED}" \
-  -e OPENID_ISSUER_URI="https://login.microsoftonline.com/b16225bd-49b8-4999-b571-c19a911ae1ec/v2.0" \
+  -e OPENID_ISSUER_URI="https://login.microsoftonline.com/32bd6411-706b-4e3e-b6fc-c0f8ed7920b6/v2.0" \
   -e OPENID_CLIENT_ID="${OPENID_CLIENT_ID}" \
   -e OPENID_CLIENT_SECRET="${OPENID_CLIENT_SECRET}" \
   -e OPENID_REDIRECT_URI="${OPENID_REDIRECT_URI}" \
