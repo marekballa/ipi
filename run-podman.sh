@@ -41,6 +41,9 @@ set -e
 
 MODE="${1:-build}"  # build | restart | stop
 
+# Optional TLS: CERT_PATH=/path/to/dir (must contain server.crt and server.key)
+export CERT_PATH="${CERT_PATH:-}"
+
 # Optional proxy: PROXY_HOST=host PROXY_PORT=port [PROXY_USER=u PROXY_PASS=p] ./run-podman.sh
 export PROXY_HOST="${PROXY_HOST:-}"
 export PROXY_PORT="${PROXY_PORT:-}"
@@ -300,9 +303,19 @@ echo "Done — container: search-report-service"
 podman stop search-report-mfe 2>/dev/null || true; podman rm search-report-mfe 2>/dev/null || true
 
 mkdir -p "$SCRIPT_DIR/nginx-templates"
+if [ -n "$CERT_PATH" ]; then
+  NGINX_LISTEN="listen 8443 ssl; ssl_certificate /etc/nginx/certs/server.crt; ssl_certificate_key /etc/nginx/certs/server.key;"
+  NGINX_PORT_MAP="-p 443:8443"
+  echo "TLS enabled: certs from $CERT_PATH"
+else
+  NGINX_LISTEN="listen 8080;"
+  NGINX_PORT_MAP="-p 80:8080"
+  echo "TLS not configured — serving HTTP on port 80"
+fi
+
 cat > "$SCRIPT_DIR/nginx-templates/default.conf.template" << 'EOF'
 server {
-  listen 8080;
+  __NGINX_LISTEN__
 
   gzip on;
   gzip_vary on;
@@ -347,18 +360,22 @@ server {
   }
 }
 EOF
-sed "s/__NGINX_RESOLVER__/${NGINX_RESOLVER}/" "$SCRIPT_DIR/nginx-templates/default.conf.template" > /tmp/nginx-conf.tmp && mv /tmp/nginx-conf.tmp "$SCRIPT_DIR/nginx-templates/default.conf.template"
+sed "s|__NGINX_RESOLVER__|${NGINX_RESOLVER}|;s|__NGINX_LISTEN__|${NGINX_LISTEN}|" "$SCRIPT_DIR/nginx-templates/default.conf.template" > /tmp/nginx-conf.tmp && mv /tmp/nginx-conf.tmp "$SCRIPT_DIR/nginx-templates/default.conf.template"
 echo "=== nginx config ==="
 cat "$SCRIPT_DIR/nginx-templates/default.conf.template"
 echo "===================="
 echo ""
 
 echo "Starting search-report-mfe..."
+CERT_VOLUME_ARG=""
+[ -n "$CERT_PATH" ] && CERT_VOLUME_ARG="-v ${CERT_PATH}:/etc/nginx/certs:ro"
+
 podman run -d \
   --name search-report-mfe \
   --network srs-net \
-  -p 80:8080 \
+  $NGINX_PORT_MAP \
   -v "$SCRIPT_DIR/nginx-templates:/etc/nginx/templates" \
+  $CERT_VOLUME_ARG \
   -e DTK_BASE_PATH="/srs" \
   -e DTK_SHELL_ID="back-office" \
   -e DTK_CONFIGURATION_SERVICE_URL="/search-report-service" \
