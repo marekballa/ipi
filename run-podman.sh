@@ -366,9 +366,18 @@ cat "$SCRIPT_DIR/nginx-templates/default.conf.template"
 echo "===================="
 echo ""
 
-echo "Starting search-report-mfe..."
 CERT_VOLUME_ARG=""
-[ -n "$CERT_PATH" ] && CERT_VOLUME_ARG="-v ${CERT_PATH}:/etc/nginx/certs:ro"
+if [ -n "$CERT_PATH" ]; then
+  CERT_VOLUME_ARG="-v ${CERT_PATH}:/etc/nginx/certs:ro"
+  echo "=== TLS certs ($CERT_PATH) ==="
+  ls -la "$CERT_PATH" || echo "  WARNING: cannot list $CERT_PATH"
+  echo "=============================="
+else
+  echo "TLS: not configured"
+fi
+echo ""
+
+echo "Starting search-report-mfe..."
 
 podman run -d \
   --name search-report-mfe \
