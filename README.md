@@ -4,7 +4,15 @@
 
 ```bash
 chmod +x run-podman.sh
-IPI_TOKEN=<your-gitlab-token> ./run-podman.sh
+
+# build the images (default command, you could omit the 'build' parameter)
+IPI_TOKEN=<your-gitlab-token> ./run-podman.sh build
+
+# run or restart the images
+./run-podman.sh restart
+
+# stop the images
+./run-podman.sh stop
 ```
 
 This builds both images and starts all containers. See the script header for all supported env vars.
