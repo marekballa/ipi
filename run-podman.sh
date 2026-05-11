@@ -55,6 +55,10 @@ else
   echo "Proxy: not configured (PROXY_HOST=${PROXY_HOST:-<empty>} PROXY_PORT=${PROXY_PORT:-<empty>})"
 fi
 
+# Image names
+IMAGE_REF_SRS="${IMAGE_REF_SRS:-"epo/search-report-service:develop"}"
+IMAGE_REF_SRM="${IMAGE_REF_SRM:-"epo/search-report-mfe:develop"}"
+
 # OpenID credentials — when both are provided, real Azure auth is used and mock is disabled
 export OPENID_CLIENT_ID="${OPENID_CLIENT_ID:-}"
 export OPENID_CLIENT_SECRET="${OPENID_CLIENT_SECRET:-}"
@@ -206,10 +210,10 @@ else
     -f "$REPOS_DIR/search-report-service/Dockerfile.prod" \
     --build-arg GIT_TOKEN="${IPI_TOKEN}" \
     $DOCKER_PROXY_ARGS \
-    -t search-report-service:local \
+    -t ${IMAGE_REF_SRS} \
     "$REPOS_DIR/search-report-service"
 
-  echo "Done — image: search-report-service:local"
+  echo "Done — image: ${IMAGE_REF_SRS}"
 
   # ── Build dtk-mfe image ─────────────────────────────────────────────────────
   # Patch dtk-mfe/Dockerfile locally for corporate SSL inspection environments:
@@ -258,11 +262,19 @@ else
     --build-arg GIT_USERNAME=oauth2 \
     --build-arg GIT_PASSWORD="${GITLAB_TOKEN}" \
     $DOCKER_PROXY_ARGS \
-    -t search-report-mfe:local \
+    -t ${IMAGE_REF_SRM} \
     "$REPOS_DIR/dtk-mfe"
+
+  echo "Done — image: ${IMAGE_REF_SRM}"
 
   rm -f "$SCRIPT_DIR/.Dockerfile.dtk-mfe-local"
 fi  # end build mode
+
+# In build mode stop after build, do not restart
+if [ "$MODE" = "build" ]; then
+  echo "end of build"
+  exit 0
+fi
 
 # ── Shared network (allows MFE nginx to proxy to backend by container name) ───
 podman network create srs-net 2>/dev/null || true
@@ -296,7 +308,7 @@ podman run -d \
   -e OPENID_SEARCH_SCOPE="api://a87b6d3d-d85e-4d9b-8704-6aed76a49444/search" \
   -e SEARCH_REPORT_SERVICE_CONTEXT_PATH="/search-report-service" \
   -e SEARCH_REPORT_SERVICE_PORT="8080" \
-  search-report-service:local
+  ${IMAGE_REF_SRS}
 echo "Done — container: search-report-service"
 
 # ── search-report-mfe (frontend) ─────────────────────────────────────────────
@@ -393,7 +405,7 @@ podman run -d \
   -e DTK_KEYCLOAK_REALM="" \
   -e DTK_KEYCLOAK_CLIENT="" \
   -e ENVIRONMENT="develop" \
-  search-report-mfe:local
+  ${IMAGE_NAME_SRM}
 echo "Done — container: search-report-mfe"
 
 # ── Access points ─────────────────────────────────────────────────────────────
