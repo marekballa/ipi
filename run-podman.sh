@@ -293,7 +293,7 @@ podman run -d \
   -e OPENID_CLIENT_ID="${OPENID_CLIENT_ID}" \
   -e OPENID_CLIENT_SECRET="${OPENID_CLIENT_SECRET}" \
   -e OPENID_REDIRECT_URI="${OPENID_REDIRECT_URI}" \
-  -e OPENID_SEARCH_SCOPE="api://a87b6d3d-d85e-4d9b-8704-6aed76a49444/search" \
+  -e OPENID_SEARCH_SCOPE="api://32bd6411-706b-4e3e-b6fc-c0f8ed7920b6/search" \
   -e SEARCH_REPORT_SERVICE_CONTEXT_PATH="/search-report-service" \
   -e SEARCH_REPORT_SERVICE_PORT="8080" \
   search-report-service:local
