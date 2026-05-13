@@ -59,6 +59,7 @@ fi
 export OPENID_CLIENT_ID="${OPENID_CLIENT_ID:-}"
 export OPENID_CLIENT_SECRET="${OPENID_CLIENT_SECRET:-}"
 export OPENID_REDIRECT_URI="${OPENID_REDIRECT_URI:-https://YOUR_DOMAIN/search-report-service/api/oauth/callback}"
+export AUTHENTICATED_SEARCH_ENDPOINT="${AUTHENTICATED_SEARCH_ENDPOINT:-https://search.epo.org/search-service-layer/master/v4/api/transit}"
 if [ -n "$OPENID_CLIENT_ID" ] && [ -n "$OPENID_CLIENT_SECRET" ]; then
   DOSSIER_MOCK_ENABLED="false"
   echo "OpenID credentials provided — mock disabled, real auth enabled"
@@ -294,6 +295,7 @@ podman run -d \
   -e OPENID_CLIENT_SECRET="${OPENID_CLIENT_SECRET}" \
   -e OPENID_REDIRECT_URI="${OPENID_REDIRECT_URI}" \
   -e OPENID_SEARCH_SCOPE="api://32bd6411-706b-4e3e-b6fc-c0f8ed7920b6/search" \
+  -e AUTHENTICATED_SEARCH_ENDPOINT="${AUTHENTICATED_SEARCH_ENDPOINT}" \
   -e SEARCH_REPORT_SERVICE_CONTEXT_PATH="/search-report-service" \
   -e SEARCH_REPORT_SERVICE_PORT="8080" \
   search-report-service:local
