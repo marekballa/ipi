@@ -326,6 +326,10 @@ server {
   gzip_min_length 0;
   gzip_types text/plain application/javascript text/css application/json application/x-javascript text/xml application/xml application/xml+rss text/javascript application/vnd.ms-fontobject application/x-font-ttf font/opentype;
 
+  proxy_buffer_size 32k;
+  proxy_buffers 8 32k;
+  proxy_busy_buffers_size 64k;
+
   location /search-report-service/ {
     proxy_pass http://search-report-service:8080;
     proxy_set_header Host $host;
