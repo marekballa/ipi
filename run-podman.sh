@@ -33,8 +33,8 @@
 #   5. Starts search-report-mfe on :8080      (nginx: serves MFE + proxies /search-report-service/)
 #
 # Access points after startup:
-#   Frontend : http://localhost:80/srs (dtk mfe)
-#   Backend  : http://localhost:80/search-report-service  (main entry point)
+#   Frontend : http://localhost:8000/srs (dtk mfe)
+#   Backend  : http://localhost:8000/search-report-service  (main entry point)
 #              http://localhost:3215/search-report-service  (direct, for debugging)
 # ──────────────────────────────────────────────────────────────────────────────
 set -e
@@ -54,6 +54,10 @@ if [ -n "$PROXY_HOST" ] && [ -n "$PROXY_PORT" ]; then
 else
   echo "Proxy: not configured (PROXY_HOST=${PROXY_HOST:-<empty>} PROXY_PORT=${PROXY_PORT:-<empty>})"
 fi
+
+# Image names
+IMAGE_REF_SRS="${IMAGE_REF_SRS:-"epo/search-report-service:develop"}"
+IMAGE_REF_SRM="${IMAGE_REF_SRM:-"epo/search-report-mfe:develop"}"
 
 # OpenID credentials — when both are provided, real Azure auth is used and mock is disabled
 export OPENID_CLIENT_ID="${OPENID_CLIENT_ID:-}"
@@ -131,6 +135,10 @@ else
     echo "Error: IPI_TOKEN must be set (export IPI_TOKEN=<your-token>)"
     exit 1
   fi
+  if [ -z "$IPI_GITHUB_TOKEN" ]; then
+    echo "Error: IPI_GITHUB_TOKEN must be set (export IPI_GITHUB_TOKEN=<your-token>)"
+    exit 1
+  fi
 
   # Used as GIT_PASSWORD inside the dtk-mfe Docker build for cloning from git.epo.org
   export GITLAB_TOKEN="${IPI_TOKEN}"
@@ -159,9 +167,9 @@ else
   sync_repo() {
     local dir="$1"
     local url="$2"
-    # Embed token for GitLab oauth2 auth
+    # Embed token for GitHub token auth (username can be anything, token is the password)
     local auth_url
-    auth_url=$(echo "$url" | sed "s|https://|https://oauth2:${IPI_TOKEN}@|")
+    auth_url=$(echo "$url" | sed "s|https://|https://${IPI_GITHUB_TOKEN}@|")
 
     if [ ! -d "$dir/.git" ]; then
       echo "Cloning $(basename "$dir")..."
@@ -183,10 +191,10 @@ else
     fi
   }
 
-  # ── Sync repos ──────────────────────────────────────────────────────────────
-  sync_repo "$REPOS_DIR/search-report-service"   "https://git.epo.org/it-cooperation/search-report-service.git"
-  sync_repo "$REPOS_DIR/fo-configuration-ch"    "https://git.epo.org/it-cooperation/fo-configuration-ch.git"
-  sync_repo "$REPOS_DIR/dtk-mfe"                "https://git.epo.org/it-cooperation/dtk-mfe.git"
+# ── Sync repos ──────────────────────────────────────────────────────────────
+  sync_repo "$REPOS_DIR/search-report-service"   "https://github.com/epo-it-cooperation/search-report-service.git"
+  sync_repo "$REPOS_DIR/fo-configuration-ch"     "https://github.com/epo-it-cooperation/fo-configuration-ch.git"
+  sync_repo "$REPOS_DIR/dtk-mfe"                 "https://github.com/epo-it-cooperation/dtk-mfe.git"
 
   # Patch importmap.json to serve MFE bundles from local nginx instead of GCS
   IMPORTMAP="$REPOS_DIR/fo-configuration-ch/apps/back-office/-shell/importmap.json"
@@ -206,10 +214,10 @@ else
     -f "$REPOS_DIR/search-report-service/Dockerfile.prod" \
     --build-arg GIT_TOKEN="${IPI_TOKEN}" \
     $DOCKER_PROXY_ARGS \
-    -t search-report-service:local \
+    -t ${IMAGE_REF_SRS} \
     "$REPOS_DIR/search-report-service"
 
-  echo "Done — image: search-report-service:local"
+  echo "Done — image: ${IMAGE_REF_SRS}"
 
   # ── Build dtk-mfe image ─────────────────────────────────────────────────────
   # Patch dtk-mfe/Dockerfile locally for corporate SSL inspection environments:
@@ -258,11 +266,19 @@ else
     --build-arg GIT_USERNAME=oauth2 \
     --build-arg GIT_PASSWORD="${GITLAB_TOKEN}" \
     $DOCKER_PROXY_ARGS \
-    -t search-report-mfe:local \
+    -t ${IMAGE_REF_SRM} \
     "$REPOS_DIR/dtk-mfe"
+
+  echo "Done — image: ${IMAGE_REF_SRM}"
 
   rm -f "$SCRIPT_DIR/.Dockerfile.dtk-mfe-local"
 fi  # end build mode
+
+# In build mode stop after build, do not restart
+if [ "$MODE" = "build" ]; then
+  echo "end of build"
+  exit 0
+fi
 
 # ── Shared network (allows MFE nginx to proxy to backend by container name) ───
 podman network create srs-net 2>/dev/null || true
@@ -296,7 +312,7 @@ podman run -d \
   -e OPENID_SEARCH_SCOPE="api://a87b6d3d-d85e-4d9b-8704-6aed76a49444/search" \
   -e SEARCH_REPORT_SERVICE_CONTEXT_PATH="/search-report-service" \
   -e SEARCH_REPORT_SERVICE_PORT="8080" \
-  search-report-service:local
+  ${IMAGE_REF_SRS}
 echo "Done — container: search-report-service"
 
 # ── search-report-mfe (frontend) ─────────────────────────────────────────────
@@ -393,7 +409,7 @@ podman run -d \
   -e DTK_KEYCLOAK_REALM="" \
   -e DTK_KEYCLOAK_CLIENT="" \
   -e ENVIRONMENT="develop" \
-  search-report-mfe:local
+  ${IMAGE_NAME_SRM}
 echo "Done — container: search-report-mfe"
 
 # ── Access points ─────────────────────────────────────────────────────────────
