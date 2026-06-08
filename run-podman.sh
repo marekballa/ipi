@@ -63,6 +63,7 @@ IMAGE_REF_SRM="${IMAGE_REF_SRM:-"epo/search-report-mfe:develop"}"
 export OPENID_CLIENT_ID="${OPENID_CLIENT_ID:-}"
 export OPENID_CLIENT_SECRET="${OPENID_CLIENT_SECRET:-}"
 export OPENID_REDIRECT_URI="${OPENID_REDIRECT_URI:-https://YOUR_DOMAIN/search-report-service/api/oauth/callback}"
+export AUTHENTICATED_SEARCH_ENDPOINT="${AUTHENTICATED_SEARCH_ENDPOINT:-https://search.epo.org/search-service-layer/master/v4/api/transit}"
 if [ -n "$OPENID_CLIENT_ID" ] && [ -n "$OPENID_CLIENT_SECRET" ]; then
   DOSSIER_MOCK_ENABLED="false"
   echo "OpenID credentials provided — mock disabled, real auth enabled"
@@ -191,7 +192,7 @@ else
     fi
   }
 
-# ── Sync repos ──────────────────────────────────────────────────────────────
+  # ── Sync repos ──────────────────────────────────────────────────────────────
   sync_repo "$REPOS_DIR/search-report-service"   "https://github.com/epo-it-cooperation/search-report-service.git"
   sync_repo "$REPOS_DIR/fo-configuration-ch"     "https://github.com/epo-it-cooperation/fo-configuration-ch.git"
   sync_repo "$REPOS_DIR/dtk-mfe"                 "https://github.com/epo-it-cooperation/dtk-mfe.git"
@@ -214,7 +215,7 @@ else
     -f "$REPOS_DIR/search-report-service/Dockerfile.prod" \
     --build-arg GIT_TOKEN="${IPI_TOKEN}" \
     $DOCKER_PROXY_ARGS \
-    -t ${IMAGE_REF_SRS} \
+    -t "${IMAGE_REF_SRS}" \
     "$REPOS_DIR/search-report-service"
 
   echo "Done — image: ${IMAGE_REF_SRS}"
@@ -266,7 +267,7 @@ else
     --build-arg GIT_USERNAME=oauth2 \
     --build-arg GIT_PASSWORD="${GITLAB_TOKEN}" \
     $DOCKER_PROXY_ARGS \
-    -t ${IMAGE_REF_SRM} \
+    -t "${IMAGE_REF_SRM}" \
     "$REPOS_DIR/dtk-mfe"
 
   echo "Done — image: ${IMAGE_REF_SRM}"
@@ -309,16 +310,16 @@ podman run -d \
   -e OPENID_CLIENT_ID="${OPENID_CLIENT_ID}" \
   -e OPENID_CLIENT_SECRET="${OPENID_CLIENT_SECRET}" \
   -e OPENID_REDIRECT_URI="${OPENID_REDIRECT_URI}" \
-  -e OPENID_SEARCH_SCOPE="api://a87b6d3d-d85e-4d9b-8704-6aed76a49444/search" \
+  -e OPENID_SEARCH_SCOPE="api://32bd6411-706b-4e3e-b6fc-c0f8ed7920b6/search" \
+  -e AUTHENTICATED_SEARCH_ENDPOINT="${AUTHENTICATED_SEARCH_ENDPOINT}" \
   -e SEARCH_REPORT_SERVICE_CONTEXT_PATH="/search-report-service" \
   -e SEARCH_REPORT_SERVICE_PORT="8080" \
-  ${IMAGE_REF_SRS}
+  "${IMAGE_REF_SRS}"
 echo "Done — container: search-report-service"
 
 # ── search-report-mfe (frontend) ─────────────────────────────────────────────
 podman stop search-report-mfe 2>/dev/null || true; podman rm search-report-mfe 2>/dev/null || true
 
-mkdir -p "$SCRIPT_DIR/nginx-templates"
 if [ -n "$CERT_PATH" ]; then
   NGINX_LISTEN="listen 8443 ssl; ssl_certificate /etc/nginx/certs/server.crt; ssl_certificate_key /etc/nginx/certs/server.key;"
   NGINX_PORT_MAP="-p 443:8443"
@@ -328,58 +329,6 @@ else
   NGINX_PORT_MAP="-p 80:8080"
   echo "TLS not configured — serving HTTP on port 80"
 fi
-
-cat > "$SCRIPT_DIR/nginx-templates/default.conf.template" << 'EOF'
-server {
-  __NGINX_LISTEN__
-
-  gzip on;
-  gzip_vary on;
-  gzip_proxied any;
-  gzip_comp_level 6;
-  gzip_buffers 16 8k;
-  gzip_http_version 1.1;
-  gzip_min_length 0;
-  gzip_types text/plain application/javascript text/css application/json application/x-javascript text/xml application/xml application/xml+rss text/javascript application/vnd.ms-fontobject application/x-font-ttf font/opentype;
-
-  location /search-report-service/ {
-    proxy_pass http://search-report-service:8080;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_read_timeout 60s;
-  }
-
-  location /srs {
-    add_header Set-Cookie environment=${ENVIRONMENT};
-    rewrite /srs/(.*) /$1 break;
-    root /usr/share/nginx/html;
-    index index.html index.htm;
-    try_files $uri $uri/ /index.html;
-    add_header X-Frame-Options DENY;
-  }
-
-  location / {
-    add_header Set-Cookie environment=${ENVIRONMENT};
-    rewrite /(.*) /$1 break;
-    root /usr/share/nginx/html;
-    index index.html index.htm;
-    try_files $uri $uri/ /index.html;
-    add_header X-Frame-Options DENY;
-  }
-
-  location /stub_status {
-    stub_status;
-    allow 127.0.0.1;
-    deny all;
-  }
-}
-EOF
-sed "s|__NGINX_RESOLVER__|${NGINX_RESOLVER}|;s|__NGINX_LISTEN__|${NGINX_LISTEN}|" "$SCRIPT_DIR/nginx-templates/default.conf.template" > /tmp/nginx-conf.tmp && mv /tmp/nginx-conf.tmp "$SCRIPT_DIR/nginx-templates/default.conf.template"
-echo "=== nginx config ==="
-cat "$SCRIPT_DIR/nginx-templates/default.conf.template"
-echo "===================="
 echo ""
 
 CERT_VOLUME_ARG=""
@@ -401,6 +350,7 @@ podman run -d \
   $NGINX_PORT_MAP \
   -v "$SCRIPT_DIR/nginx-templates:/etc/nginx/templates" \
   $CERT_VOLUME_ARG \
+  -e NGINX_LISTEN="$NGINX_LISTEN" \
   -e DTK_BASE_PATH="/srs" \
   -e DTK_SHELL_ID="back-office" \
   -e DTK_CONFIGURATION_SERVICE_URL="/search-report-service" \
@@ -409,7 +359,7 @@ podman run -d \
   -e DTK_KEYCLOAK_REALM="" \
   -e DTK_KEYCLOAK_CLIENT="" \
   -e ENVIRONMENT="develop" \
-  ${IMAGE_NAME_SRM}
+  "${IMAGE_NAME_SRM}"
 echo "Done — container: search-report-mfe"
 
 # ── Access points ─────────────────────────────────────────────────────────────
