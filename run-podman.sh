@@ -33,8 +33,8 @@
 #   5. Starts search-report-mfe on :8080      (nginx: serves MFE + proxies /search-report-service/)
 #
 # Access points after startup:
-#   Frontend : http://localhost:80/srs (dtk mfe)
-#   Backend  : http://localhost:80/search-report-service  (main entry point)
+#   Frontend : http://localhost:8000/srs (dtk mfe)
+#   Backend  : http://localhost:8000/search-report-service  (main entry point)
 #              http://localhost:3215/search-report-service  (direct, for debugging)
 # ──────────────────────────────────────────────────────────────────────────────
 set -e
@@ -290,6 +290,63 @@ if [ "$MODE" = "build" ]; then
   exit 0
 fi
 
+# generate a default nginx template (re-introduced for local container runs)
+generate_default_nginx_template () {
+  mkdir -p "$SCRIPT_DIR/nginx-templates"
+  cat > "$SCRIPT_DIR/nginx-templates/default.conf.template" << 'EOF'
+server {
+  listen 8080;
+
+  gzip on;
+  gzip_vary on;
+  gzip_proxied any;
+  gzip_comp_level 6;
+  gzip_buffers 16 8k;
+  gzip_http_version 1.1;
+  gzip_min_length 0;
+  gzip_types text/plain application/javascript text/css application/json application/x-javascript text/xml application/xml application/xml+rss text/javascript application/vnd.ms-fontobject application/x-font-ttf font/opentype;
+
+  location /search-report-service/ {
+    proxy_pass http://search-report-service:8080;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 60s;
+  }
+
+  location /srs {
+    add_header Set-Cookie environment=${ENVIRONMENT};
+    rewrite /srs/(.*) /$1 break;
+    root /usr/share/nginx/html;
+    index index.html index.htm;
+    try_files $uri $uri/ /index.html;
+    add_header X-Frame-Options DENY;
+  }
+
+  location / {
+    add_header Set-Cookie environment=${ENVIRONMENT};
+    rewrite /(.*) /$1 break;
+    root /usr/share/nginx/html;
+    index index.html index.htm;
+    try_files $uri $uri/ /index.html;
+    add_header X-Frame-Options DENY;
+  }
+
+  location /stub_status {
+    stub_status;
+    allow 127.0.0.1;
+    deny all;
+  }
+}
+EOF
+  sed "s/__NGINX_RESOLVER__/${NGINX_RESOLVER}/" "$SCRIPT_DIR/nginx-templates/default.conf.template" > /tmp/nginx-conf.tmp && mv /tmp/nginx-conf.tmp "$SCRIPT_DIR/nginx-templates/default.conf.template"
+  echo "=== nginx config ==="
+  cat "$SCRIPT_DIR/nginx-templates/default.conf.template"
+  echo "===================="
+  echo ""
+}
+
 # ── Shared network (allows MFE nginx to proxy to backend by container name) ───
 podman network create srs-net 2>/dev/null || true
 
@@ -302,6 +359,8 @@ echo "nginx resolver: $NGINX_RESOLVER"
 
 # ── search-report-service (backend) ──────────────────────────────────────────
 podman stop search-report-service 2>/dev/null || true; podman rm search-report-service 2>/dev/null || true
+
+generate_default_nginx_template
 
 echo "Starting search-report-service..."
 podman run -d \
@@ -335,8 +394,8 @@ if [ -n "$CERT_PATH" ]; then
   echo "TLS enabled: certs from $CERT_PATH"
 else
   NGINX_LISTEN="listen 8080;"
-  NGINX_PORT_MAP="-p 80:8080"
-  echo "TLS not configured — serving HTTP on port 80"
+  NGINX_PORT_MAP="-p 8000:8080"
+  echo "TLS not configured — serving HTTP on port 8000"
 fi
 echo ""
 
@@ -357,9 +416,9 @@ podman run -d \
   --name search-report-mfe \
   --network srs-net \
   $NGINX_PORT_MAP \
-  -v "$SCRIPT_DIR/nginx-templates:/etc/nginx/templates" \
   $CERT_VOLUME_ARG \
   -e NGINX_LISTEN="$NGINX_LISTEN" \
+  -v "$SCRIPT_DIR/nginx-templates:/etc/nginx/templates" \
   -e DTK_BASE_PATH="/srs" \
   -e DTK_SHELL_ID="back-office" \
   -e DTK_CONFIGURATION_SERVICE_URL="/search-report-service" \
@@ -369,11 +428,12 @@ podman run -d \
   -e DTK_KEYCLOAK_CLIENT="" \
   -e ENVIRONMENT="develop" \
   "${IMAGE_REF_SRM}"
+
 echo "Done — container: search-report-mfe"
 
 # ── Access points ─────────────────────────────────────────────────────────────
 echo ""
-echo "  Frontend:  http://localhost:80/srs"
+echo "  Frontend:  http://localhost:8000/srs"
 echo "  Backend:   http://localhost:3215/search-report-service  (direct, for debugging)"
 echo ""
 echo "Following logs (Ctrl+C to stop)..."
