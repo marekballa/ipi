@@ -33,8 +33,8 @@
 #   5. Starts search-report-mfe on :8080      (nginx: serves MFE + proxies /search-report-service/)
 #
 # Access points after startup:
-#   Frontend : http://localhost:8000/srs (dtk mfe)
-#   Backend  : http://localhost:8000/search-report-service  (main entry point)
+#   Frontend : http://localhost:80/srs (dtk mfe)
+#   Backend  : http://localhost:80/search-report-service  (main entry point)
 #              http://localhost:3215/search-report-service  (direct, for debugging)
 # ──────────────────────────────────────────────────────────────────────────────
 set -e
@@ -168,6 +168,7 @@ else
   sync_repo() {
     local dir="$1"
     local url="$2"
+    local branch="${3:-"default"}"
     # Embed token for GitHub token auth (username can be anything, token is the password)
     local auth_url
     auth_url=$(echo "$url" | sed "s|https://|https://${IPI_GITHUB_TOKEN}@|")
@@ -175,12 +176,18 @@ else
     if [ ! -d "$dir/.git" ]; then
       echo "Cloning $(basename "$dir")..."
       git $GIT_PROXY_ARGS clone "$auth_url" "$dir"
+      if [[ -d "$dir" && "$branch" != "default" ]]; then
+        (cd "$dir" && git checkout "$branch")
+      fi
     else
       echo "Updating $(basename "$dir")..."
       if ! git -C "$dir" $GIT_PROXY_ARGS fetch origin; then
         echo "  → fetch failed, re-cloning $(basename "$dir")..."
         rm -rf "$dir"
         git $GIT_PROXY_ARGS clone "$auth_url" "$dir"
+        if [[ -d "$dir" && "$branch" != "default" ]]; then
+          (cd "$dir" && git checkout "$branch")
+        fi
       else
         # Only reset if there are no local (uncommitted) changes
         if git -C "$dir" diff --quiet && git -C "$dir" diff --cached --quiet; then
@@ -193,9 +200,10 @@ else
   }
 
   # ── Sync repos ──────────────────────────────────────────────────────────────
-  sync_repo "$REPOS_DIR/search-report-service"   "https://github.com/epo-it-cooperation/search-report-service.git"
-  sync_repo "$REPOS_DIR/fo-configuration-ch"     "https://github.com/epo-it-cooperation/fo-configuration-ch.git"
-  sync_repo "$REPOS_DIR/dtk-mfe"                 "https://github.com/epo-it-cooperation/dtk-mfe.git"
+  GITHUB_BASE_URL="https://github.com/epo-it-cooperation"
+  sync_repo "$REPOS_DIR/search-report-service" "${GITHUB_BASE_URL}/search-report-service.git" develop
+  sync_repo "$REPOS_DIR/fo-configuration-ch"   "${GITHUB_BASE_URL}/fo-configuration-ch.git"   develop
+  sync_repo "$REPOS_DIR/dtk-mfe"               "${GITHUB_BASE_URL}/dtk-mfe.git"               develop
 
   # Patch importmap.json to serve MFE bundles from local nginx instead of GCS
   IMPORTMAP="$REPOS_DIR/fo-configuration-ch/apps/back-office/-shell/importmap.json"
@@ -213,7 +221,7 @@ else
   echo "Building search-report-service image..."
   podman build --no-cache \
     -f "$REPOS_DIR/search-report-service/Dockerfile.prod" \
-    --build-arg GIT_TOKEN="${IPI_TOKEN}" \
+    --build-arg GIT_TOKEN="${IPI_GITHUB_TOKEN}" \
     $DOCKER_PROXY_ARGS \
     -t "${IMAGE_REF_SRS}" \
     "$REPOS_DIR/search-report-service"
@@ -274,6 +282,7 @@ else
 
   rm -f "$SCRIPT_DIR/.Dockerfile.dtk-mfe-local"
 fi  # end build mode
+
 
 # In build mode stop after build, do not restart
 if [ "$MODE" = "build" ]; then
@@ -359,7 +368,7 @@ podman run -d \
   -e DTK_KEYCLOAK_REALM="" \
   -e DTK_KEYCLOAK_CLIENT="" \
   -e ENVIRONMENT="develop" \
-  "${IMAGE_NAME_SRM}"
+  "${IMAGE_REF_SRM}"
 echo "Done — container: search-report-mfe"
 
 # ── Access points ─────────────────────────────────────────────────────────────
