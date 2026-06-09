@@ -33,8 +33,8 @@
 #   5. Starts search-report-mfe on :8080      (nginx: serves MFE + proxies /search-report-service/)
 #
 # Access points after startup:
-#   Frontend : http://localhost:80/srs (dtk mfe)
-#   Backend  : http://localhost:80/search-report-service  (main entry point)
+#   Frontend : http://localhost:8000/srs (dtk mfe)
+#   Backend  : http://localhost:8000/search-report-service  (main entry point)
 #              http://localhost:3215/search-report-service  (direct, for debugging)
 # ──────────────────────────────────────────────────────────────────────────────
 set -e
@@ -54,6 +54,10 @@ if [ -n "$PROXY_HOST" ] && [ -n "$PROXY_PORT" ]; then
 else
   echo "Proxy: not configured (PROXY_HOST=${PROXY_HOST:-<empty>} PROXY_PORT=${PROXY_PORT:-<empty>})"
 fi
+
+# Image names
+IMAGE_REF_SRS="${IMAGE_REF_SRS:-"epo/search-report-service:develop"}"
+IMAGE_REF_SRM="${IMAGE_REF_SRM:-"epo/search-report-mfe:develop"}"
 
 # OpenID credentials — when both are provided, real Azure auth is used and mock is disabled
 export OPENID_CLIENT_ID="${OPENID_CLIENT_ID:-}"
@@ -132,6 +136,10 @@ else
     echo "Error: IPI_TOKEN must be set (export IPI_TOKEN=<your-token>)"
     exit 1
   fi
+  if [ -z "$IPI_GITHUB_TOKEN" ]; then
+    echo "Error: IPI_GITHUB_TOKEN must be set (export IPI_GITHUB_TOKEN=<your-token>)"
+    exit 1
+  fi
 
   # Used as GIT_PASSWORD inside the dtk-mfe Docker build for cloning from git.epo.org
   export GITLAB_TOKEN="${IPI_TOKEN}"
@@ -160,19 +168,26 @@ else
   sync_repo() {
     local dir="$1"
     local url="$2"
-    # Embed token for GitLab oauth2 auth
+    local branch="${3:-"default"}"
+    # Embed token for GitHub token auth (username can be anything, token is the password)
     local auth_url
-    auth_url=$(echo "$url" | sed "s|https://|https://oauth2:${IPI_TOKEN}@|")
+    auth_url=$(echo "$url" | sed "s|https://|https://${IPI_GITHUB_TOKEN}@|")
 
     if [ ! -d "$dir/.git" ]; then
       echo "Cloning $(basename "$dir")..."
       git $GIT_PROXY_ARGS clone "$auth_url" "$dir"
+      if [[ -d "$dir" && "$branch" != "default" ]]; then
+        (cd "$dir" && git checkout "$branch")
+      fi
     else
       echo "Updating $(basename "$dir")..."
       if ! git -C "$dir" $GIT_PROXY_ARGS fetch origin; then
         echo "  → fetch failed, re-cloning $(basename "$dir")..."
         rm -rf "$dir"
         git $GIT_PROXY_ARGS clone "$auth_url" "$dir"
+        if [[ -d "$dir" && "$branch" != "default" ]]; then
+          (cd "$dir" && git checkout "$branch")
+        fi
       else
         # Only reset if there are no local (uncommitted) changes
         if git -C "$dir" diff --quiet && git -C "$dir" diff --cached --quiet; then
@@ -185,9 +200,10 @@ else
   }
 
   # ── Sync repos ──────────────────────────────────────────────────────────────
-  sync_repo "$REPOS_DIR/search-report-service"   "https://git.epo.org/it-cooperation/search-report-service.git"
-  sync_repo "$REPOS_DIR/fo-configuration-ch"    "https://git.epo.org/it-cooperation/fo-configuration-ch.git"
-  sync_repo "$REPOS_DIR/dtk-mfe"                "https://git.epo.org/it-cooperation/dtk-mfe.git"
+  GITHUB_BASE_URL="https://github.com/epo-it-cooperation"
+  sync_repo "$REPOS_DIR/search-report-service" "${GITHUB_BASE_URL}/search-report-service.git" develop
+  sync_repo "$REPOS_DIR/fo-configuration-ch"   "${GITHUB_BASE_URL}/fo-configuration-ch.git"   develop
+  sync_repo "$REPOS_DIR/dtk-mfe"               "${GITHUB_BASE_URL}/dtk-mfe.git"               develop
 
   # Patch importmap.json to serve MFE bundles from local nginx instead of GCS
   IMPORTMAP="$REPOS_DIR/fo-configuration-ch/apps/back-office/-shell/importmap.json"
@@ -205,12 +221,12 @@ else
   echo "Building search-report-service image..."
   podman build --no-cache \
     -f "$REPOS_DIR/search-report-service/Dockerfile.prod" \
-    --build-arg GIT_TOKEN="${IPI_TOKEN}" \
+    --build-arg GIT_TOKEN="${IPI_GITHUB_TOKEN}" \
     $DOCKER_PROXY_ARGS \
-    -t search-report-service:local \
+    -t "${IMAGE_REF_SRS}" \
     "$REPOS_DIR/search-report-service"
 
-  echo "Done — image: search-report-service:local"
+  echo "Done — image: ${IMAGE_REF_SRS}"
 
   # ── Build dtk-mfe image ─────────────────────────────────────────────────────
   # Patch dtk-mfe/Dockerfile locally for corporate SSL inspection environments:
@@ -259,11 +275,77 @@ else
     --build-arg GIT_USERNAME=oauth2 \
     --build-arg GIT_PASSWORD="${GITLAB_TOKEN}" \
     $DOCKER_PROXY_ARGS \
-    -t search-report-mfe:local \
+    -t "${IMAGE_REF_SRM}" \
     "$REPOS_DIR/dtk-mfe"
+
+  echo "Done — image: ${IMAGE_REF_SRM}"
 
   rm -f "$SCRIPT_DIR/.Dockerfile.dtk-mfe-local"
 fi  # end build mode
+
+
+# In build mode stop after build, do not restart
+if [ "$MODE" = "build" ]; then
+  echo "end of build"
+  exit 0
+fi
+
+# generate a default nginx template (re-introduced for local container runs)
+generate_default_nginx_template () {
+  mkdir -p "$SCRIPT_DIR/nginx-templates"
+  cat > "$SCRIPT_DIR/nginx-templates/default.conf.template" << 'EOF'
+server {
+  listen 8080;
+
+  gzip on;
+  gzip_vary on;
+  gzip_proxied any;
+  gzip_comp_level 6;
+  gzip_buffers 16 8k;
+  gzip_http_version 1.1;
+  gzip_min_length 0;
+  gzip_types text/plain application/javascript text/css application/json application/x-javascript text/xml application/xml application/xml+rss text/javascript application/vnd.ms-fontobject application/x-font-ttf font/opentype;
+
+  location /search-report-service/ {
+    proxy_pass http://search-report-service:8080;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 60s;
+  }
+
+  location /srs {
+    add_header Set-Cookie environment=${ENVIRONMENT};
+    rewrite /srs/(.*) /$1 break;
+    root /usr/share/nginx/html;
+    index index.html index.htm;
+    try_files $uri $uri/ /index.html;
+    add_header X-Frame-Options DENY;
+  }
+
+  location / {
+    add_header Set-Cookie environment=${ENVIRONMENT};
+    rewrite /(.*) /$1 break;
+    root /usr/share/nginx/html;
+    index index.html index.htm;
+    try_files $uri $uri/ /index.html;
+    add_header X-Frame-Options DENY;
+  }
+
+  location /stub_status {
+    stub_status;
+    allow 127.0.0.1;
+    deny all;
+  }
+}
+EOF
+  sed "s/__NGINX_RESOLVER__/${NGINX_RESOLVER}/" "$SCRIPT_DIR/nginx-templates/default.conf.template" > /tmp/nginx-conf.tmp && mv /tmp/nginx-conf.tmp "$SCRIPT_DIR/nginx-templates/default.conf.template"
+  echo "=== nginx config ==="
+  cat "$SCRIPT_DIR/nginx-templates/default.conf.template"
+  echo "===================="
+  echo ""
+}
 
 # ── Shared network (allows MFE nginx to proxy to backend by container name) ───
 podman network create srs-net 2>/dev/null || true
@@ -277,6 +359,8 @@ echo "nginx resolver: $NGINX_RESOLVER"
 
 # ── search-report-service (backend) ──────────────────────────────────────────
 podman stop search-report-service 2>/dev/null || true; podman rm search-report-service 2>/dev/null || true
+
+generate_default_nginx_template
 
 echo "Starting search-report-service..."
 podman run -d \
@@ -298,7 +382,7 @@ podman run -d \
   -e AUTHENTICATED_SEARCH_ENDPOINT="${AUTHENTICATED_SEARCH_ENDPOINT}" \
   -e SEARCH_REPORT_SERVICE_CONTEXT_PATH="/search-report-service" \
   -e SEARCH_REPORT_SERVICE_PORT="8080" \
-  search-report-service:local
+  "${IMAGE_REF_SRS}"
 echo "Done — container: search-report-service"
 
 # ── search-report-mfe (frontend) ─────────────────────────────────────────────
@@ -310,8 +394,8 @@ if [ -n "$CERT_PATH" ]; then
   echo "TLS enabled: certs from $CERT_PATH"
 else
   NGINX_LISTEN="listen 8080;"
-  NGINX_PORT_MAP="-p 80:8080"
-  echo "TLS not configured — serving HTTP on port 80"
+  NGINX_PORT_MAP="-p 8000:8080"
+  echo "TLS not configured — serving HTTP on port 8000"
 fi
 echo ""
 
@@ -332,9 +416,9 @@ podman run -d \
   --name search-report-mfe \
   --network srs-net \
   $NGINX_PORT_MAP \
-  -v "$SCRIPT_DIR/nginx-templates:/etc/nginx/templates" \
   $CERT_VOLUME_ARG \
   -e NGINX_LISTEN="$NGINX_LISTEN" \
+  -v "$SCRIPT_DIR/nginx-templates:/etc/nginx/templates" \
   -e DTK_BASE_PATH="/srs" \
   -e DTK_SHELL_ID="back-office" \
   -e DTK_CONFIGURATION_SERVICE_URL="/search-report-service" \
@@ -343,12 +427,13 @@ podman run -d \
   -e DTK_KEYCLOAK_REALM="" \
   -e DTK_KEYCLOAK_CLIENT="" \
   -e ENVIRONMENT="develop" \
-  search-report-mfe:local
+  "${IMAGE_REF_SRM}"
+
 echo "Done — container: search-report-mfe"
 
 # ── Access points ─────────────────────────────────────────────────────────────
 echo ""
-echo "  Frontend:  http://localhost:80/srs"
+echo "  Frontend:  http://localhost:8000/srs"
 echo "  Backend:   http://localhost:3215/search-report-service  (direct, for debugging)"
 echo ""
 echo "Following logs (Ctrl+C to stop)..."
