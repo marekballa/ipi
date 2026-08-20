@@ -304,6 +304,7 @@ echo "Done — container: search-report-service"
 # ── search-report-mfe (frontend) ─────────────────────────────────────────────
 podman stop search-report-mfe 2>/dev/null || true; podman rm search-report-mfe 2>/dev/null || true
 
+mkdir -p "$SCRIPT_DIR/nginx-templates"
 if [ -n "$CERT_PATH" ]; then
   NGINX_LISTEN="listen 8443 ssl; ssl_certificate /etc/nginx/certs/server.crt; ssl_certificate_key /etc/nginx/certs/server.key;"
   NGINX_PORT_MAP="-p 443:8443"
@@ -313,6 +314,62 @@ else
   NGINX_PORT_MAP="-p 80:8080"
   echo "TLS not configured — serving HTTP on port 80"
 fi
+
+cat > "$SCRIPT_DIR/nginx-templates/default.conf.template" << 'EOF'
+server {
+  __NGINX_LISTEN__
+
+  gzip on;
+  gzip_vary on;
+  gzip_proxied any;
+  gzip_comp_level 6;
+  gzip_buffers 16 8k;
+  gzip_http_version 1.1;
+  gzip_min_length 0;
+  gzip_types text/plain application/javascript text/css application/json application/x-javascript text/xml application/xml application/xml+rss text/javascript application/vnd.ms-fontobject application/x-font-ttf font/opentype;
+
+  proxy_buffer_size 32k;
+  proxy_buffers 8 32k;
+  proxy_busy_buffers_size 64k;
+
+  location /search-report-service/ {
+    proxy_pass http://search-report-service:8080;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 60s;
+  }
+
+  location /srs {
+    add_header Set-Cookie environment=${ENVIRONMENT};
+    rewrite /srs/(.*) /$1 break;
+    root /usr/share/nginx/html;
+    index index.html index.htm;
+    try_files $uri $uri/ /index.html;
+    add_header X-Frame-Options DENY;
+  }
+
+  location / {
+    add_header Set-Cookie environment=${ENVIRONMENT};
+    rewrite /(.*) /$1 break;
+    root /usr/share/nginx/html;
+    index index.html index.htm;
+    try_files $uri $uri/ /index.html;
+    add_header X-Frame-Options DENY;
+  }
+
+  location /stub_status {
+    stub_status;
+    allow 127.0.0.1;
+    deny all;
+  }
+}
+EOF
+sed "s|__NGINX_RESOLVER__|${NGINX_RESOLVER}|;s|__NGINX_LISTEN__|${NGINX_LISTEN}|" "$SCRIPT_DIR/nginx-templates/default.conf.template" > /tmp/nginx-conf.tmp && mv /tmp/nginx-conf.tmp "$SCRIPT_DIR/nginx-templates/default.conf.template"
+echo "=== nginx config ==="
+cat "$SCRIPT_DIR/nginx-templates/default.conf.template"
+echo "===================="
 echo ""
 
 CERT_VOLUME_ARG=""
@@ -334,7 +391,6 @@ podman run -d \
   $NGINX_PORT_MAP \
   -v "$SCRIPT_DIR/nginx-templates:/etc/nginx/templates" \
   $CERT_VOLUME_ARG \
-  -e NGINX_LISTEN="$NGINX_LISTEN" \
   -e DTK_BASE_PATH="/srs" \
   -e DTK_SHELL_ID="back-office" \
   -e DTK_CONFIGURATION_SERVICE_URL="/search-report-service" \
