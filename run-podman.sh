@@ -412,7 +412,3 @@ echo ""
 
 podman logs -f search-report-mfe &
 podman logs -f search-report-service
-
-# Cleanup
-rm -f "$SCRIPT_DIR/nginx-templates/default.conf.template"
-rmdir "$SCRIPT_DIR/nginx-templates" 2>/dev/null || true
