@@ -151,39 +151,20 @@ else
   else
     echo "Proxy: none (set PROXY_HOST and PROXY_PORT to enable)"
   fi
-  # ── Clone or pull a repo ─────────────────────────────────────────────────────
-  # Usage: sync_repo <dir> <repo-url>
+  # ── Clone a repo (always fresh) ─────────────────────────────────────────────
+  # Usage: sync_repo <dir> <repo-url> <branch-or-tag>
+  # Always nukes and re-clones — guarantees the checkout matches the requested ref
+  # on every run. No conditional logic to reason about.
   sync_repo() {
     local dir="$1"
     local url="$2"
-    local branch="${3:-"default"}"
-    # Embed token for GitHub token auth (username can be anything, token is the password)
+    local branch="$3"
     local auth_url
     auth_url=$(echo "$url" | sed "s|https://|https://${IPI_GITHUB_TOKEN}@|")
-    if [ ! -d "$dir/.git" ]; then
-      echo "Cloning $(basename "$dir")..."
-      git $GIT_PROXY_ARGS clone "$auth_url" "$dir"
-      if [[ -d "$dir" && "$branch" != "default" ]]; then
-        (cd "$dir" && git checkout "$branch")
-      fi
-    else
-      echo "Updating $(basename "$dir")..."
-      if ! git -C "$dir" $GIT_PROXY_ARGS fetch origin; then
-        echo "  → fetch failed, re-cloning $(basename "$dir")..."
-        rm -rf "$dir"
-        git $GIT_PROXY_ARGS clone "$auth_url" "$dir"
-        if [[ -d "$dir" && "$branch" != "default" ]]; then
-          (cd "$dir" && git checkout "$branch")
-        fi
-      else
-        # Only reset if there are no local (uncommitted) changes
-        if git -C "$dir" diff --quiet && git -C "$dir" diff --cached --quiet; then
-          git -C "$dir" reset --hard origin/$(git -C "$dir" rev-parse --abbrev-ref HEAD)
-        else
-          echo "  → local changes detected in $(basename "$dir"), skipping reset"
-        fi
-      fi
-    fi
+    echo "Cloning $(basename "$dir") at $branch..."
+    rm -rf "$dir"
+    git $GIT_PROXY_ARGS clone "$auth_url" "$dir"
+    (cd "$dir" && git checkout "$branch")
   }
   # ── Sync repos ──────────────────────────────────────────────────────────────
   GITHUB_BASE_URL="https://github.com/epo-it-cooperation"
@@ -296,6 +277,7 @@ NGINX_EOF
   echo ""
   echo "Building dtk-mfe image..."
   podman build \
+    --progress=plain \
     -f "$DTK_DOCKERFILE" \
     --build-arg DTK_REPO_REF=${COMMIT_REF} \
     --build-arg DTK_FE_COMMON_REF=${COMMIT_REF} \
@@ -304,7 +286,7 @@ NGINX_EOF
     $DEP_REF_ARGS \
     $DOCKER_PROXY_ARGS \
     -t "${IMAGE_REF_SRM}" \
-    "$REPOS_DIR/dtk-mfe"
+    "$REPOS_DIR/dtk-mfe" 2>&1 | tee "$SCRIPT_DIR/dtk-mfe-build.log"
   echo "Done — image: ${IMAGE_REF_SRM}"
   rm -f "$SCRIPT_DIR/.Dockerfile.dtk-mfe-local"
 fi  # end build mode
