@@ -181,7 +181,10 @@ else
     echo "WARNING: importmap.json not found at $IMPORTMAP — skipping patch"
   fi
   # ── Build search-report-service Docker image (Dockerfile.prod builds JAR internally) ──
-  mkdir -p "$REPOS_DIR/search-report-service/config"
+  # Bake patched fo-configuration-ch into the image (Dockerfile.prod COPYs config/ → /data/config)
+  # so the running container needs no volume mount.
+  rm -rf "$REPOS_DIR/search-report-service/config"
+  cp -r "$REPOS_DIR/fo-configuration-ch" "$REPOS_DIR/search-report-service/config"
   echo "Building search-report-service image..."
   podman build --no-cache \
     -f "$REPOS_DIR/search-report-service/Dockerfile.prod" \

@@ -24,6 +24,9 @@ dtk-mfe/
 .springBeans
 .sts4-cache
 
+./run-containers.sh
+dtk-mfe-build.log
+
 ### IntelliJ IDEA ###
 .idea
 *.iws
